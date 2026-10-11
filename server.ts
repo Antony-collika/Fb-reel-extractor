@@ -3,35 +3,9 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import puppeteer from 'puppeteer';
+import { buildReelsTabUrl } from './reels-url.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-function buildReelsTabUrl(inputUrl: string): { profileId: string; reelsTabUrl: string } {
-  const value = inputUrl.trim();
-  const url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
-  if (!/(^|\.)facebook\.com$/i.test(url.hostname)) {
-    throw new Error('Vui lòng nhập URL hồ sơ Facebook hợp lệ.');
-  }
-
-  const idParam = url.searchParams.get('id');
-  const peopleMatch = url.pathname.match(/\/people\/[^/]+\/(\d+)/i);
-  const profileId = idParam || peopleMatch?.[1];
-  if (profileId) {
-    return {
-      profileId,
-      reelsTabUrl: `https://www.facebook.com/profile.php?id=${encodeURIComponent(profileId)}&sk=reels_tab`,
-    };
-  }
-
-  const cleanPath = url.pathname.replace(/\/$/, '');
-  if (!cleanPath || cleanPath === '/profile.php') {
-    throw new Error('Không xác định được hồ sơ từ URL Facebook đã nhập.');
-  }
-  return {
-    profileId: cleanPath.split('/').pop() || 'unknown',
-    reelsTabUrl: `https://www.facebook.com${cleanPath}/reels/`,
-  };
-}
 
 async function startServer() {
   const app = express();
