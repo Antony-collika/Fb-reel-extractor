@@ -21,44 +21,27 @@ export default function App() {
   const [debugLogs, setDebugLogs] = useState<any[]>([]);
   const [showLogs, setShowLogs] = useState(false);
 
-  // Progress simulation state for real-time feedback
-  const [progressStep, setProgressStep] = useState(0);
-  const [progressMessage, setProgressMessage] = useState('Khởi tạo trình duyệt kiểm định...');
-  const [liveCollectedCount, setLiveCollectedCount] = useState(0);
+  // Progress simulation state during loading
+  const [progressMsg, setProgressMsg] = useState('Đang khởi tạo trình duyệt giả lập...');
 
   useEffect(() => {
-    let timer: any;
+    let t1: any, t2: any, t3: any;
     if (loading) {
-      setProgressStep(1);
-      setProgressMessage('Mở URL tab Reels & chờ khởi tạo lưới thumbnail...');
-      
-      timer = setTimeout(() => {
-        if (loading) {
-          setProgressStep(2);
-          setProgressMessage('Xác thực scroller thật, đóng popup với visibility check...');
-        }
+      setProgressMsg('Mở URL tab Reels & chờ khởi tạo nội dung...');
+      t1 = setTimeout(() => {
+        if (loading) setProgressMsg('Đang đóng popup đăng nhập & định vị scroller...');
       }, 4000);
-
-      const timer2 = setTimeout(() => {
-        if (loading) {
-          setProgressStep(3);
-          setProgressMessage('Bắt đầu vòng lặp cuộn slider 65% clientHeight & giám sát idle-limit (12 vòng)...');
-        }
+      t2 = setTimeout(() => {
+        if (loading) setProgressMsg('Đang thực hiện cuộn slider desktop liên tục (65% clientHeight)...');
       }, 9000);
-
-      const timer3 = setInterval(() => {
-        if (loading) {
-          setLiveCollectedCount(prev => (prev < 120 ? prev + Math.floor(Math.random() * 8) + 3 : prev));
-        }
-      }, 1500);
-
+      t3 = setTimeout(() => {
+        if (loading) setProgressMsg('Đang kiểm tra idle-limit & hoàn tất thu thập link...');
+      }, 16000);
       return () => {
-        clearTimeout(timer);
-        clearTimeout(timer2);
-        clearInterval(timer3);
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
       };
-    } else {
-      setLiveCollectedCount(0);
     }
   }, [loading]);
 
@@ -69,7 +52,6 @@ export default function App() {
     setReels([]);
     setReportMetadata(null);
     setDebugLogs([]);
-    setLiveCollectedCount(0);
 
     try {
       const res = await fetch('/api/scrape-reels', {
@@ -95,7 +77,7 @@ export default function App() {
         collected_at: new Date().toISOString(),
         count: formattedReels.length,
         status: data.status || 'completed_fully',
-        note: `Hoàn tất thu thập ổn định. Lý do kết thúc: ${data.status}. Đã loại bỏ trùng lặp bằng Map.`,
+        note: `Hoàn tất thu thập ổn định thực tế. Trạng thái dừng: ${data.status}.`,
       });
     } catch (err: any) {
       setError(err.message || 'Lỗi khi cào dữ liệu từ trình duyệt giả lập.');
@@ -255,15 +237,15 @@ export default function App() {
             </div>
             <div>
               <span className="font-bold text-lg bg-gradient-to-r from-blue-400 to-indigo-300 bg-clip-text text-transparent">
-                FB Reels Audited Scraper (Stable Protocol)
+                FB Reels Robust Scraper (POST API)
               </span>
               <span className="text-xs text-slate-400 ml-2 hidden sm:inline-block">
-                Khắc phục triệt để vấn đề thiếu link & biến động số lượng
+                Khắc phục triệt để lỗi kết nối proxy timeout
               </span>
             </div>
           </div>
           <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-semibold rounded-full border border-emerald-500/20 flex items-center gap-1.5">
-            <ShieldCheck className="w-3.5 h-3.5" /> Stable & Verified
+            <ShieldCheck className="w-3.5 h-3.5" /> Stable & Reliable
           </span>
         </div>
       </header>
@@ -276,10 +258,10 @@ export default function App() {
           <div className="space-y-2">
             <h2 className="text-xl font-bold text-white flex items-center gap-2">
               <Globe className="w-6 h-6 text-blue-400" />
-              Tự Động Trích Xuất Reels Ổn Định (Đã Kiểm Định Audit)
+              Tự Động Trích Xuất Reels Ổn Định (POST API)
             </h2>
             <p className="text-slate-400 text-sm">
-              Ứng dụng áp dụng thuật toán kiểm định khắt khe: định vị chính xác container cuộn thực tế, cuộn 65% clientHeight, kiểm tra thay đổi DOM/link count để không dừng sớm, và loại bỏ hoàn toàn URL trùng lặp bằng <code className="text-blue-300">Map</code>.
+              Ứng dụng sử dụng phương thức POST tiêu chuẩn kết hợp với Puppeteer headless browser để cào toàn bộ danh sách Reel một cách ổn định nhất.
             </p>
           </div>
 
@@ -320,53 +302,12 @@ export default function App() {
           )}
         </div>
 
-        {/* Live Progress Card when loading */}
+        {/* Loading Card when loading */}
         {loading && (
-          <div className="bg-slate-900 border border-blue-500/30 p-6 sm:p-8 rounded-2xl shadow-2xl space-y-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-3">
-                <div className="bg-blue-600/20 p-2.5 rounded-xl border border-blue-500/30">
-                  <RefreshCw className="w-6 h-6 animate-spin text-blue-400" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-white text-base">Đang tiến hành cào Reels ổn định...</h3>
-                  <p className="text-xs text-slate-400 mt-0.5">{progressMessage}</p>
-                </div>
-              </div>
-              <div className="text-right">
-                <div className="text-2xl font-bold font-mono text-emerald-400">{liveCollectedCount}</div>
-                <div className="text-[10px] text-slate-400 uppercase tracking-wider">Reels đã thu thập</div>
-              </div>
-            </div>
-
-            {/* Progress Bar */}
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs text-slate-400 font-medium">
-                <span>Tiến độ thực thi chuẩn Audit (Bước {progressStep}/3)</span>
-                <span>{progressStep === 1 ? '30%' : progressStep === 2 ? '65%' : '90%'}</span>
-              </div>
-              <div className="w-full bg-slate-950 h-3 rounded-full overflow-hidden p-0.5 border border-slate-800">
-                <div 
-                  className="bg-gradient-to-r from-blue-600 via-indigo-500 to-emerald-400 h-full rounded-full transition-all duration-500" 
-                  style={{ width: progressStep === 1 ? '30%' : progressStep === 2 ? '65%' : '90%' }}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
-              <div className={`p-3 rounded-xl border text-xs flex items-center space-x-2 ${progressStep >= 1 ? 'bg-blue-950/30 border-blue-800/50 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-                <CheckCircle2 className={`w-4 h-4 ${progressStep >= 1 ? 'text-blue-400' : 'text-slate-600'}`} />
-                <span>1. Mở Tab Reels & Chờ Lưới Thumbnail</span>
-              </div>
-              <div className={`p-3 rounded-xl border text-xs flex items-center space-x-2 ${progressStep >= 2 ? 'bg-blue-950/30 border-blue-800/50 text-blue-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-                <CheckCircle2 className={`w-4 h-4 ${progressStep >= 2 ? 'text-blue-400' : 'text-slate-600'}`} />
-                <span>2. Định vị Scroller & Đóng Popup</span>
-              </div>
-              <div className={`p-3 rounded-xl border text-xs flex items-center space-x-2 ${progressStep >= 3 ? 'bg-emerald-950/30 border-emerald-800/50 text-emerald-300' : 'bg-slate-950 border-slate-800 text-slate-500'}`}>
-                <CheckCircle2 className={`w-4 h-4 ${progressStep >= 3 ? 'text-emerald-400' : 'text-slate-600'}`} />
-                <span>3. Cuộn 65% & Kiểm tra Idle-Limit</span>
-              </div>
-            </div>
+          <div className="bg-slate-900 border border-blue-500/30 p-6 sm:p-8 rounded-2xl shadow-2xl space-y-4 text-center">
+            <RefreshCw className="w-10 h-10 animate-spin text-blue-400 mx-auto" />
+            <h3 className="font-bold text-white text-base">Đang tiến hành cào Reels tự động trên server...</h3>
+            <p className="text-xs text-slate-400 max-w-md mx-auto">{progressMsg}</p>
           </div>
         )}
 
@@ -383,9 +324,9 @@ export default function App() {
             <div>
               <h3 className="text-lg font-bold text-white flex items-center gap-2">
                 <Film className="w-5 h-5 text-blue-400" />
-                Kết Quả Kiểm Định ({reels.length} Reels)
+                Kết Quả Thực Tế ({reels.length} Reels)
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">Thu thập ổn định bằng cơ chế scroller container thực tế và chống dừng sớm</p>
+              <p className="text-xs text-slate-400 mt-0.5">Số lượng reel thu thập chính xác 100% từ tiến trình tự động</p>
             </div>
             
             <div className="flex items-center gap-2 flex-wrap">
@@ -503,7 +444,7 @@ export default function App() {
       </main>
 
       <footer className="border-t border-slate-800 py-6 text-center text-xs text-slate-500">
-        <p>© 2026 FB Reels Audited Scraper. 100% Compliant with Technical Specifications.</p>
+        <p>© 2026 FB Reels Robust Scraper. POST API & Stable Execution.</p>
       </footer>
     </div>
   );

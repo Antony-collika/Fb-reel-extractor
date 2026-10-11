@@ -43,6 +43,7 @@ async function startServer() {
     }
   }
 
+  // Robust POST endpoint for headless browser scraping
   app.post('/api/scrape-reels', async (req, res) => {
     let browser;
     try {
@@ -53,7 +54,7 @@ async function startServer() {
 
       const { profileId, reelsTabUrl } = buildReelsTabUrl(profileUrl);
 
-      console.log(`[Audited Scraper] Launching headless browser for: ${reelsTabUrl}`);
+      console.log(`[Puppeteer] Launching headless browser for: ${reelsTabUrl}`);
 
       browser = await puppeteer.launch({
         headless: true,
@@ -87,7 +88,6 @@ async function startServer() {
 
       await new Promise((r) => setTimeout(r, 3000));
 
-      // Pass script as a raw string literal to page.evaluate to prevent esbuild from injecting __name helper
       const evaluationResult: any = await page.evaluate(`
         (async function() {
           var debugLogs = [];
@@ -237,8 +237,8 @@ async function startServer() {
       if (browser) {
         try { await browser.close(); } catch (_) {}
       }
-      console.error('Audited Scraper error:', error);
-      res.status(500).json({ error: error.message || 'Failed to scrape reels via audited protocol' });
+      console.error('Puppeteer scrape reels error:', error);
+      res.status(500).json({ error: error.message || 'Failed to scrape reels via headless browser' });
     }
   });
 
