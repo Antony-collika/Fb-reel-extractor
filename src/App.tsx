@@ -64,10 +64,10 @@ export default function App() {
         data = JSON.parse(responseText);
       } catch {
         const preview = responseText
-          .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')
-          .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')
+          .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+          .replace(/<style[\s\S]*?<\/style>/gi, ' ')
           .replace(/<[^>]+>/g, ' ')
-          .replace(/\\s+/g, ' ')
+          .replace(/\s+/g, ' ')
           .trim()
           .slice(0, 220);
 
