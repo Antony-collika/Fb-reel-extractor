@@ -21,7 +21,6 @@ export default function App() {
   const [debugLogs, setDebugLogs] = useState<any[]>([]);
   const [showLogs, setShowLogs] = useState(false);
 
-  // Progress simulation state during loading
   const [progressMsg, setProgressMsg] = useState('Đang khởi tạo trình duyệt giả lập...');
 
   useEffect(() => {
@@ -143,77 +142,137 @@ export default function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const auditedBookmarkletCode = `javascript:(async function(){
-  const sourceUrl = location.href;
-  const isLogin = () => /\\/login(?:\\/|\\?|$)/i.test(location.pathname);
+  // Synchronized Audited Bookmarklet Script matching server.ts mechanism exactly
+  const synchronizedBookmarkletCode = `javascript:(async function(){
+  var sourceUrl = location.href;
+  var isLogin = function() { return /\\/login(?:\\/|\\?|$)/i.test(location.pathname); };
   if (isLogin()) { alert('Vui lòng đăng nhập Facebook trước.'); return; }
 
-  const closePopup = () => {
-    const visible = el => {
-      const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+  var closePopup = function() {
+    var visible = function(el) {
+      var r = el.getBoundingClientRect();
+      var s = window.getComputedStyle(el);
       return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
     };
-    const dialogs = [...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')]
+    var dialogs = Array.prototype.slice.call(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))
       .filter(visible);
-    const roots = dialogs.length ? dialogs : [document];
-    const closeBtn = roots.flatMap(root =>
-      [...root.querySelectorAll('[aria-label="Close"], [aria-label="close"]')]
-    ).find(el => visible(el) && /^(close|đóng|dismiss)$/i.test(el.getAttribute('aria-label') || ''));
-    if (closeBtn) { closeBtn.click(); return true; }
+    var roots = dialogs.length ? dialogs : [document];
+    var closeBtn = null;
+    for (var i = 0; i < roots.length; i++) {
+      var btns = roots[i].querySelectorAll('[aria-label="Close"], [aria-label="close"]');
+      for (var j = 0; j < btns.length; j++) {
+        if (visible(btns[j]) && /^(close|đóng|dismiss)$/i.test(btns[j].getAttribute('aria-label') || '')) {
+          closeBtn = btns[j];
+          break;
+        }
+      }
+      if (closeBtn) break;
+    }
+    if (closeBtn) {
+      closeBtn.click();
+      return true;
+    }
     return false;
   };
 
   closePopup();
-  await new Promise(r => setTimeout(r, 1200));
+  await new Promise(function(r) { setTimeout(r, 1200); });
+  closePopup();
 
-  const scroller = document.querySelector('#scrollview') ||
-    [...document.querySelectorAll('*')].find(el => {
-      const s = getComputedStyle(el);
-      return /(auto|scroll)/.test(s.overflowY) && el.scrollHeight > el.clientHeight + 150;
-    }) || document.scrollingElement || window;
+  var scroller = document.querySelector('#scrollview');
+  if (!scroller) {
+    var all = document.querySelectorAll('*');
+    for (var k = 0; k < all.length; k++) {
+      var s = window.getComputedStyle(all[k]);
+      if (/(auto|scroll)/.test(s.overflowY) && all[k].scrollHeight > all[k].clientHeight + 150) {
+        scroller = all[k];
+        break;
+      }
+    }
+  }
+  if (!scroller || scroller === document.body || scroller === document.documentElement) {
+    scroller = window;
+  }
 
-  const seen = new Map();
-  const scan = () => {
-    for (const a of document.querySelectorAll('a[href]')) {
+  var seen = new Map();
+  var scan = function() {
+    var anchors = document.querySelectorAll('a[href]');
+    for (var a = 0; a < anchors.length; a++) {
       try {
-        const u = new URL(a.href, location.href);
-        const m = u.pathname.match(/^\\/reel\\/(\\d+)/i);
-        if (m) seen.set(m[1], 'https://www.facebook.com/reel/' + m[1] + '/');
-      } catch (_) {}
+        var href = anchors[a].getAttribute('href') || '';
+        var m = href.match(/\\/reel\\/(\\d+)/i);
+        if (m) {
+          seen.set(m[1], 'https://www.facebook.com/reel/' + m[1] + '/');
+        }
+      } catch (e) {}
     }
   };
 
   scan();
   alert('Bắt đầu cào Reels chuẩn Audited...');
 
-  const maxSteps = 150, idleLimit = 12, delayMs = 2500;
-  let idle = 0, previousCount = seen.size;
-  let previousHeight = scroller === window || scroller === document.scrollingElement ? document.body.scrollHeight : scroller.scrollHeight;
+  var maxSteps = 150;
+  var idleLimit = 12;
+  var idle = 0;
+  var prevCount = seen.size;
+  var prevHeight = scroller === window ? document.body.scrollHeight : scroller.scrollHeight;
 
-  for (let step = 1; step <= maxSteps && idle < idleLimit; step++) {
-    if (isLogin()) { location.href = sourceUrl; await new Promise(r => setTimeout(r, 3500)); continue; }
+  for (var step = 1; step <= maxSteps && idle < idleLimit; step++) {
+    if (isLogin()) {
+      location.href = sourceUrl;
+      await new Promise(function(r) { setTimeout(r, 3500); });
+      continue;
+    }
+
     closePopup();
-    const amount = Math.max(300, Math.floor((scroller.clientHeight || window.innerHeight) * 0.65));
-    if (scroller === window || scroller === document.scrollingElement) {
+
+    var clientH = scroller === window ? window.innerHeight : scroller.clientHeight;
+    var scrollH = scroller === window ? document.body.scrollHeight : scroller.scrollHeight;
+    var scrollT = scroller === window ? window.scrollY : scroller.scrollTop;
+    var amount = Math.max(300, Math.floor(clientH * 0.65));
+
+    if (scroller === window) {
       window.scrollBy({ top: amount, behavior: 'smooth' });
+      window.dispatchEvent(new WheelEvent('wheel', { deltaY: amount }));
     } else {
-      scroller.scrollTop = Math.min(scroller.scrollTop + amount, scroller.scrollHeight);
+      scroller.scrollTop = Math.min(scrollT + amount, scrollH);
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
     }
-    await new Promise(r => setTimeout(r, delayMs));
+
+    await new Promise(function(r) { setTimeout(r, 2500); });
     scan();
-    const count = seen.size;
-    const height = scroller === window || scroller === document.scrollingElement ? document.body.scrollHeight : scroller.scrollHeight;
-    const changed = count !== previousCount || height !== previousHeight;
-    idle = changed ? 0 : idle + 1;
-    previousCount = count;
-    previousHeight = height;
+
+    var currCount = seen.size;
+    var currHeight = scroller === window ? document.body.scrollHeight : scroller.scrollHeight;
+    var newLinksAdded = currCount - prevCount;
+    var heightChanged = currHeight !== prevHeight;
+
+    if (newLinksAdded > 0 || heightChanged) {
+      idle = 0;
+    } else {
+      idle++;
+    }
+
+    prevCount = currCount;
+    prevHeight = currHeight;
+
+    if (scrollT + clientH >= scrollH - 50 && idle >= 4) {
+      break;
+    }
   }
 
-  const urls = [...seen.values()];
-  if (urls.length === 0) { alert('Không tìm thấy link reel!'); return; }
-  const blob = new Blob([urls.join('\\n')], { type: 'text/plain;charset=utf-8' });
-  const a = document.createElement('a');
+  var urls = [];
+  seen.forEach(function(url) {
+    urls.push(url);
+  });
+
+  if (urls.length === 0) {
+    alert('Không tìm thấy link reel nào!');
+    return;
+  }
+
+  var blob = new Blob([urls.join('\\n')], { type: 'text/plain;charset=utf-8' });
+  var a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = 'facebook_reels_' + Date.now() + '.txt';
   a.click();
@@ -221,7 +280,7 @@ export default function App() {
 })();`;
 
   const handleCopyScript = () => {
-    navigator.clipboard.writeText(auditedBookmarkletCode);
+    navigator.clipboard.writeText(synchronizedBookmarkletCode);
     setCopiedScript(true);
     setTimeout(() => setCopiedScript(false), 2000);
   };
@@ -237,15 +296,15 @@ export default function App() {
             </div>
             <div>
               <span className="font-bold text-lg bg-gradient-to-r from-blue-400 to-indigo-300 bg-clip-text text-transparent">
-                FB Reels Robust Scraper (POST API)
+                FB Reels Synchronized Scraper
               </span>
               <span className="text-xs text-slate-400 ml-2 hidden sm:inline-block">
-                Khắc phục triệt để lỗi kết nối proxy timeout
+                Script UI khớp 100% với cơ chế server hiện tại
               </span>
             </div>
           </div>
           <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-semibold rounded-full border border-emerald-500/20 flex items-center gap-1.5">
-            <ShieldCheck className="w-3.5 h-3.5" /> Stable & Reliable
+            <ShieldCheck className="w-3.5 h-3.5" /> 100% Synchronized Protocol
           </span>
         </div>
       </header>
@@ -418,33 +477,33 @@ export default function App() {
           ) : null}
         </div>
 
-        {/* Bottom Section: Audited Bookmarklet Script */}
+        {/* Bottom Section: Synchronized Bookmarklet Script */}
         <div className="bg-slate-900 border border-slate-800 p-6 sm:p-8 rounded-2xl shadow-xl space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="text-md font-bold text-white flex items-center gap-2">
               <Code className="w-5 h-5 text-amber-400" />
-              Đoạn Script Chuẩn Kiểm Định (Audited Bookmarklet)
+              Đoạn Script Chuẩn Đồng Bộ (Synchronized Bookmarklet)
             </h3>
             <button
               onClick={handleCopyScript}
               className="bg-slate-800 hover:bg-slate-700 text-white px-3.5 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5 border border-slate-700"
             >
               {copiedScript ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copiedScript ? 'Đã sao chép script' : 'Sao chép Script Audited'}</span>
+              <span>{copiedScript ? 'Đã sao chép script' : 'Sao chép Script Đồng Bộ'}</span>
             </button>
           </div>
           <p className="text-xs text-slate-400">
-            Script này áp dụng triệt để mọi tiêu chuẩn trong tài liệu audit: kiểm tra visibility popup, tìm container cuộn thực tế, cuộn 65% clientHeight, cơ chế idle-limit (12 bước) chống dừng sớm và tự động tải file TXT + JSON metadata.
+            Đoạn script dưới đây được cập nhật khớp 100% với cơ chế xử lý đang chạy trên server (kiểm tra visibility popup, phát hiện scroller `#scrollview` hoặc overflow-y container, cuộn 65% clientHeight, vòng lặp dừng thông minh idle-limit 12 bước và xuất file TXT).
           </p>
           <pre className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-[11px] font-mono text-emerald-400 overflow-x-auto max-h-48">
-            {auditedBookmarkletCode}
+            {synchronizedBookmarkletCode}
           </pre>
         </div>
 
       </main>
 
       <footer className="border-t border-slate-800 py-6 text-center text-xs text-slate-500">
-        <p>© 2026 FB Reels Robust Scraper. POST API & Stable Execution.</p>
+        <p>© 2026 FB Reels Synchronized Scraper. 100% Matching Server Mechanism.</p>
       </footer>
     </div>
   );
