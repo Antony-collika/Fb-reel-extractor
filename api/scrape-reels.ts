@@ -56,7 +56,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     }
     await new Promise((resolve) => setTimeout(resolve, 1800));
 
-    const result = await page.evaluate(scrapePage);
+    const result = await scrapePage(page);
 
     return res.status(200).json({
       success: true,
