@@ -99,14 +99,15 @@ export async function scrapePage() {
 
     if (useWindow) {
       window.scrollTo({ top: before.top + amount, behavior: 'instant' });
-      window.dispatchEvent(new WheelEvent('wheel', { deltaY: amount, bubbles: true }));
+      const wheelTarget = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2) || document.scrollingElement || document.documentElement;
+      wheelTarget.dispatchEvent(new WheelEvent('wheel', { deltaY: amount, bubbles: true }));
     } else {
       scroller.scrollTop = Math.min(before.top + amount, before.scrollHeight);
       scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
       scroller.dispatchEvent(new WheelEvent('wheel', { deltaY: amount, bubbles: true }));
     }
 
-    await pause(1200);
+    await pause(1800);
     closePopups();
     const count = scan();
     const after = metrics();
@@ -117,7 +118,7 @@ export async function scrapePage() {
     previousCount = count;
     previousHeight = after.scrollHeight;
 
-    if (after.top + after.clientHeight >= after.scrollHeight - 80 && idleSteps >= 8) break;
+    if (after.top + after.clientHeight >= after.scrollHeight - 80 && idleSteps >= 10) break;
   }
 
   const pageState = /\/checkpoint\//i.test(location.pathname)
