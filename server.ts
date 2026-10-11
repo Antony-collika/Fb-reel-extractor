@@ -53,7 +53,7 @@ async function startServer() {
 
       const { profileId, reelsTabUrl } = buildReelsTabUrl(profileUrl);
 
-      console.log(`[Puppeteer] Launching headless browser for: ${reelsTabUrl}`);
+      console.log(`[Audited Scraper] Launching headless browser for: ${reelsTabUrl}`);
 
       browser = await puppeteer.launch({
         headless: true,
@@ -63,7 +63,7 @@ async function startServer() {
           '--disable-dev-shm-usage',
           '--disable-gpu',
           '--disable-notifications',
-          '--window-size=1280,800',
+          '--window-size=1280,1024',
         ],
       });
 
@@ -71,19 +71,30 @@ async function startServer() {
       await page.setUserAgent(
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
       );
-      await page.setViewport({ width: 1280, height: 900 });
+      await page.setViewport({ width: 1280, height: 1024 });
 
       try {
-        await page.goto(reelsTabUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.goto(reelsTabUrl, { waitUntil: 'networkidle2', timeout: 35000 });
       } catch (navErr) {
-        console.warn('Navigation timeout/redirect:', navErr);
+        console.warn('Navigation networkidle2 timeout:', navErr);
       }
 
-      await new Promise((r) => setTimeout(r, 4000));
+      try {
+        await page.waitForSelector('a[href*="/reel/"]', { timeout: 10000 });
+      } catch (e) {
+        console.warn('Initial reels selector wait timeout.');
+      }
 
-      // Pass script as a raw string to page.evaluate to completely prevent esbuild from injecting __name helper
-      const extractedLinks = await page.evaluate(`
-        (async () => {
+      await new Promise((r) => setTimeout(r, 3000));
+
+      // Pass script as a raw string literal to page.evaluate to prevent esbuild from injecting __name helper
+      const evaluationResult: any = await page.evaluate(`
+        (async function() {
+          var debugLogs = [];
+          var log = function(msg, meta) {
+            debugLogs.push({ time: new Date().toISOString(), msg: msg, meta: meta || {} });
+          };
+
           function closePopup() {
             var visible = function(el) {
               var r = el.getBoundingClientRect();
@@ -95,7 +106,7 @@ async function startServer() {
             var roots = dialogs.length ? dialogs : [document];
             var closeBtn = null;
             for (var i = 0; i < roots.length; i++) {
-              var btns = roots[i].querySelectorAll('[aria-label="Close"], [aria-label="close"], button');
+              var btns = roots[i].querySelectorAll('[aria-label="Close"], [aria-label="close"]');
               for (var j = 0; j < btns.length; j++) {
                 if (visible(btns[j]) && /^(close|đóng|dismiss)$/i.test(btns[j].getAttribute('aria-label') || '')) {
                   closeBtn = btns[j];
@@ -106,14 +117,32 @@ async function startServer() {
             }
             if (closeBtn) {
               closeBtn.click();
+              log('Closed popup dialog');
               return true;
             }
             return false;
           }
 
           closePopup();
-          await new Promise(function(r) { setTimeout(r, 1000); });
+          await new Promise(function(r) { setTimeout(r, 1200); });
           closePopup();
+
+          var scroller = document.querySelector('#scrollview');
+          if (!scroller) {
+            var all = document.querySelectorAll('*');
+            for (var k = 0; k < all.length; k++) {
+              var s = window.getComputedStyle(all[k]);
+              if (/(auto|scroll)/.test(s.overflowY) && all[k].scrollHeight > all[k].clientHeight + 150) {
+                scroller = all[k];
+                break;
+              }
+            }
+          }
+          if (!scroller || scroller === document.body || scroller === document.documentElement) {
+            scroller = window;
+          }
+
+          log('Scroller identified', { tag: scroller === window ? 'window' : scroller.tagName });
 
           var seen = new Map();
           var scan = function() {
@@ -130,34 +159,66 @@ async function startServer() {
           };
 
           scan();
+          log('Initial scan count', { count: seen.size });
 
-          var maxSteps = 30;
-          var idleLimit = 5;
+          var maxSteps = 150;
+          var idleLimit = 12;
           var idle = 0;
           var prevCount = seen.size;
+          var prevHeight = scroller === window ? document.body.scrollHeight : scroller.scrollHeight;
 
           for (var step = 1; step <= maxSteps && idle < idleLimit; step++) {
             closePopup();
-            window.scrollBy({ top: 1200, behavior: 'smooth' });
-            window.dispatchEvent(new WheelEvent('wheel', { deltaY: 1200 }));
 
-            await new Promise(function(r) { setTimeout(r, 2000); });
+            var clientH = scroller === window ? window.innerHeight : scroller.clientHeight;
+            var scrollH = scroller === window ? document.body.scrollHeight : scroller.scrollHeight;
+            var scrollT = scroller === window ? window.scrollY : scroller.scrollTop;
+
+            var amount = Math.max(300, Math.floor(clientH * 0.65));
+
+            if (scroller === window) {
+              window.scrollBy({ top: amount, behavior: 'smooth' });
+              window.dispatchEvent(new WheelEvent('wheel', { deltaY: amount }));
+            } else {
+              scroller.scrollTop = Math.min(scrollT + amount, scrollH);
+              scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
+            }
+
+            await new Promise(function(r) { setTimeout(r, 2500); });
             scan();
 
             var currCount = seen.size;
-            if (currCount > prevCount) {
+            var currHeight = scroller === window ? document.body.scrollHeight : scroller.scrollHeight;
+
+            var newLinksAdded = currCount - prevCount;
+            var heightChanged = currHeight !== prevHeight;
+
+            if (newLinksAdded > 0 || heightChanged) {
               idle = 0;
             } else {
               idle++;
             }
+
+            log('Step execution', { step: step, count: currCount, added: newLinksAdded, height: currHeight, idle: idle });
+
             prevCount = currCount;
+            prevHeight = currHeight;
+
+            if (scrollT + clientH >= scrollH - 50 && idle >= 4) {
+              break;
+            }
           }
 
           var result = [];
           seen.forEach(function(url) {
             result.push(url);
           });
-          return result;
+
+          return {
+            links: result,
+            debugLogs: debugLogs,
+            status: idle >= idleLimit ? 'stopped_idle_limit' : 'stopped_max_steps'
+          };
         })()
       `);
 
@@ -167,15 +228,17 @@ async function startServer() {
         success: true,
         profileId,
         reelsTabUrl,
-        count: (extractedLinks as any[]).length,
-        links: extractedLinks,
+        count: (evaluationResult.links || []).length,
+        links: evaluationResult.links || [],
+        debugLogs: evaluationResult.debugLogs || [],
+        status: evaluationResult.status || 'completed',
       });
     } catch (error: any) {
       if (browser) {
         try { await browser.close(); } catch (_) {}
       }
-      console.error('Puppeteer scrape reels error:', error);
-      res.status(500).json({ error: error.message || 'Failed to scrape reels via headless browser' });
+      console.error('Audited Scraper error:', error);
+      res.status(500).json({ error: error.message || 'Failed to scrape reels via audited protocol' });
     }
   });
 
