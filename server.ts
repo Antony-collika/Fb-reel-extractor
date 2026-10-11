@@ -81,82 +81,85 @@ async function startServer() {
 
       await new Promise((r) => setTimeout(r, 4000));
 
-      const extractedLinks = await page.evaluate(async function() {
-        function closePopup() {
-          var visible = function(el: any) {
-            var r = el.getBoundingClientRect();
-            var s = window.getComputedStyle(el);
-            return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
-          };
-          var dialogs = Array.prototype.slice.call(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))
-            .filter(visible);
-          var roots = dialogs.length ? dialogs : [document];
-          var closeBtn: any = null;
-          for (var i = 0; i < roots.length; i++) {
-            var btns = roots[i].querySelectorAll('[aria-label="Close"], [aria-label="close"], button');
-            for (var j = 0; j < btns.length; j++) {
-              if (visible(btns[j]) && /^(close|đóng|dismiss)$/i.test(btns[j].getAttribute('aria-label') || '')) {
-                closeBtn = btns[j];
-                break;
+      // Pass script as a raw string to page.evaluate to completely prevent esbuild from injecting __name helper
+      const extractedLinks = await page.evaluate(`
+        (async () => {
+          function closePopup() {
+            var visible = function(el) {
+              var r = el.getBoundingClientRect();
+              var s = window.getComputedStyle(el);
+              return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
+            };
+            var dialogs = Array.prototype.slice.call(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))
+              .filter(visible);
+            var roots = dialogs.length ? dialogs : [document];
+            var closeBtn = null;
+            for (var i = 0; i < roots.length; i++) {
+              var btns = roots[i].querySelectorAll('[aria-label="Close"], [aria-label="close"], button');
+              for (var j = 0; j < btns.length; j++) {
+                if (visible(btns[j]) && /^(close|đóng|dismiss)$/i.test(btns[j].getAttribute('aria-label') || '')) {
+                  closeBtn = btns[j];
+                  break;
+                }
               }
+              if (closeBtn) break;
             }
-            if (closeBtn) break;
+            if (closeBtn) {
+              closeBtn.click();
+              return true;
+            }
+            return false;
           }
-          if (closeBtn) {
-            closeBtn.click();
-            return true;
-          }
-          return false;
-        }
 
-        closePopup();
-        await new Promise(function(r) { setTimeout(r, 1000); });
-        closePopup();
-
-        var seen = new Map();
-        var scan = function() {
-          var anchors = document.querySelectorAll('a[href]');
-          for (var a = 0; a < anchors.length; a++) {
-            try {
-              var href = anchors[a].getAttribute('href') || '';
-              var m = href.match(/\/reel\/(\d+)/i);
-              if (m) {
-                seen.set(m[1], 'https://www.facebook.com/reel/' + m[1] + '/');
-              }
-            } catch (e) {}
-          }
-        };
-
-        scan();
-
-        var maxSteps = 30;
-        var idleLimit = 5;
-        var idle = 0;
-        var prevCount = seen.size;
-
-        for (var step = 1; step <= maxSteps && idle < idleLimit; step++) {
           closePopup();
-          window.scrollBy({ top: 1200, behavior: 'smooth' });
-          window.dispatchEvent(new WheelEvent('wheel', { deltaY: 1200 }));
+          await new Promise(function(r) { setTimeout(r, 1000); });
+          closePopup();
 
-          await new Promise(function(r) { setTimeout(r, 2000); });
+          var seen = new Map();
+          var scan = function() {
+            var anchors = document.querySelectorAll('a[href]');
+            for (var a = 0; a < anchors.length; a++) {
+              try {
+                var href = anchors[a].getAttribute('href') || '';
+                var m = href.match(/\\/reel\\/(\\d+)/i);
+                if (m) {
+                  seen.set(m[1], 'https://www.facebook.com/reel/' + m[1] + '/');
+                }
+              } catch (e) {}
+            }
+          };
+
           scan();
 
-          var currCount = seen.size;
-          if (currCount > prevCount) {
-            idle = 0;
-          } else {
-            idle++;
-          }
-          prevCount = currCount;
-        }
+          var maxSteps = 30;
+          var idleLimit = 5;
+          var idle = 0;
+          var prevCount = seen.size;
 
-        var result: string[] = [];
-        seen.forEach(function(url) {
-          result.push(url);
-        });
-        return result;
-      });
+          for (var step = 1; step <= maxSteps && idle < idleLimit; step++) {
+            closePopup();
+            window.scrollBy({ top: 1200, behavior: 'smooth' });
+            window.dispatchEvent(new WheelEvent('wheel', { deltaY: 1200 }));
+
+            await new Promise(function(r) { setTimeout(r, 2000); });
+            scan();
+
+            var currCount = seen.size;
+            if (currCount > prevCount) {
+              idle = 0;
+            } else {
+              idle++;
+            }
+            prevCount = currCount;
+          }
+
+          var result = [];
+          seen.forEach(function(url) {
+            result.push(url);
+          });
+          return result;
+        })()
+      `);
 
       await browser.close();
 
@@ -164,7 +167,7 @@ async function startServer() {
         success: true,
         profileId,
         reelsTabUrl,
-        count: extractedLinks.length,
+        count: (extractedLinks as any[]).length,
         links: extractedLinks,
       });
     } catch (error: any) {
