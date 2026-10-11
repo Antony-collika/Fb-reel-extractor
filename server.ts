@@ -43,7 +43,6 @@ async function startServer() {
     }
   }
 
-  // Robust POST endpoint for headless browser scraping
   app.post('/api/scrape-reels', async (req, res) => {
     let browser;
     try {
@@ -64,7 +63,7 @@ async function startServer() {
           '--disable-dev-shm-usage',
           '--disable-gpu',
           '--disable-notifications',
-          '--window-size=1280,1024',
+          '--window-size=1280,800',
         ],
       });
 
@@ -72,29 +71,19 @@ async function startServer() {
       await page.setUserAgent(
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
       );
-      await page.setViewport({ width: 1280, height: 1024 });
+      await page.setViewport({ width: 1280, height: 900 });
 
       try {
-        await page.goto(reelsTabUrl, { waitUntil: 'networkidle2', timeout: 35000 });
+        await page.goto(reelsTabUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
       } catch (navErr) {
-        console.warn('Navigation networkidle2 timeout:', navErr);
+        console.warn('Navigation timeout/redirect:', navErr);
       }
 
-      try {
-        await page.waitForSelector('a[href*="/reel/"]', { timeout: 10000 });
-      } catch (e) {
-        console.warn('Initial reels selector wait timeout.');
-      }
+      await new Promise((r) => setTimeout(r, 4000));
 
-      await new Promise((r) => setTimeout(r, 3000));
-
-      const evaluationResult: any = await page.evaluate(`
-        (async function() {
-          var debugLogs = [];
-          var log = function(msg, meta) {
-            debugLogs.push({ time: new Date().toISOString(), msg: msg, meta: meta || {} });
-          };
-
+      // Pass script as a raw string to page.evaluate to completely prevent esbuild from injecting __name helper
+      const extractedLinks = await page.evaluate(`
+        (async () => {
           function closePopup() {
             var visible = function(el) {
               var r = el.getBoundingClientRect();
@@ -106,7 +95,7 @@ async function startServer() {
             var roots = dialogs.length ? dialogs : [document];
             var closeBtn = null;
             for (var i = 0; i < roots.length; i++) {
-              var btns = roots[i].querySelectorAll('[aria-label="Close"], [aria-label="close"]');
+              var btns = roots[i].querySelectorAll('[aria-label="Close"], [aria-label="close"], button');
               for (var j = 0; j < btns.length; j++) {
                 if (visible(btns[j]) && /^(close|đóng|dismiss)$/i.test(btns[j].getAttribute('aria-label') || '')) {
                   closeBtn = btns[j];
@@ -117,32 +106,14 @@ async function startServer() {
             }
             if (closeBtn) {
               closeBtn.click();
-              log('Closed popup dialog');
               return true;
             }
             return false;
           }
 
           closePopup();
-          await new Promise(function(r) { setTimeout(r, 1200); });
+          await new Promise(function(r) { setTimeout(r, 1000); });
           closePopup();
-
-          var scroller = document.querySelector('#scrollview');
-          if (!scroller) {
-            var all = document.querySelectorAll('*');
-            for (var k = 0; k < all.length; k++) {
-              var s = window.getComputedStyle(all[k]);
-              if (/(auto|scroll)/.test(s.overflowY) && all[k].scrollHeight > all[k].clientHeight + 150) {
-                scroller = all[k];
-                break;
-              }
-            }
-          }
-          if (!scroller || scroller === document.body || scroller === document.documentElement) {
-            scroller = window;
-          }
-
-          log('Scroller identified', { tag: scroller === window ? 'window' : scroller.tagName });
 
           var seen = new Map();
           var scan = function() {
@@ -159,66 +130,34 @@ async function startServer() {
           };
 
           scan();
-          log('Initial scan count', { count: seen.size });
 
-          var maxSteps = 150;
-          var idleLimit = 12;
+          var maxSteps = 30;
+          var idleLimit = 5;
           var idle = 0;
           var prevCount = seen.size;
-          var prevHeight = scroller === window ? document.body.scrollHeight : scroller.scrollHeight;
 
           for (var step = 1; step <= maxSteps && idle < idleLimit; step++) {
             closePopup();
+            window.scrollBy({ top: 1200, behavior: 'smooth' });
+            window.dispatchEvent(new WheelEvent('wheel', { deltaY: 1200 }));
 
-            var clientH = scroller === window ? window.innerHeight : scroller.clientHeight;
-            var scrollH = scroller === window ? document.body.scrollHeight : scroller.scrollHeight;
-            var scrollT = scroller === window ? window.scrollY : scroller.scrollTop;
-
-            var amount = Math.max(300, Math.floor(clientH * 0.65));
-
-            if (scroller === window) {
-              window.scrollBy({ top: amount, behavior: 'smooth' });
-              window.dispatchEvent(new WheelEvent('wheel', { deltaY: amount }));
-            } else {
-              scroller.scrollTop = Math.min(scrollT + amount, scrollH);
-              scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
-            }
-
-            await new Promise(function(r) { setTimeout(r, 2500); });
+            await new Promise(function(r) { setTimeout(r, 2000); });
             scan();
 
             var currCount = seen.size;
-            var currHeight = scroller === window ? document.body.scrollHeight : scroller.scrollHeight;
-
-            var newLinksAdded = currCount - prevCount;
-            var heightChanged = currHeight !== prevHeight;
-
-            if (newLinksAdded > 0 || heightChanged) {
+            if (currCount > prevCount) {
               idle = 0;
             } else {
               idle++;
             }
-
-            log('Step execution', { step: step, count: currCount, added: newLinksAdded, height: currHeight, idle: idle });
-
             prevCount = currCount;
-            prevHeight = currHeight;
-
-            if (scrollT + clientH >= scrollH - 50 && idle >= 4) {
-              break;
-            }
           }
 
           var result = [];
           seen.forEach(function(url) {
             result.push(url);
           });
-
-          return {
-            links: result,
-            debugLogs: debugLogs,
-            status: idle >= idleLimit ? 'stopped_idle_limit' : 'stopped_max_steps'
-          };
+          return result;
         })()
       `);
 
@@ -228,10 +167,8 @@ async function startServer() {
         success: true,
         profileId,
         reelsTabUrl,
-        count: (evaluationResult.links || []).length,
-        links: evaluationResult.links || [],
-        debugLogs: evaluationResult.debugLogs || [],
-        status: evaluationResult.status || 'completed',
+        count: (extractedLinks as any[]).length,
+        links: extractedLinks,
       });
     } catch (error: any) {
       if (browser) {
