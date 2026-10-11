@@ -2,18 +2,9 @@ import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { GoogleGenAI } from '@google/genai';
+import puppeteer from 'puppeteer';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY || '',
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    },
-  },
-});
 
 async function startServer() {
   const app = express();
@@ -52,8 +43,8 @@ async function startServer() {
     }
   }
 
-  // API endpoint for robust Facebook reels link extraction
   app.post('/api/scrape-reels', async (req, res) => {
+    let browser;
     try {
       const { profileUrl } = req.body;
       if (!profileUrl) {
@@ -62,69 +53,126 @@ async function startServer() {
 
       const { profileId, reelsTabUrl } = buildReelsTabUrl(profileUrl);
 
-      console.log(`[Scraper] Fetching Reels for: ${reelsTabUrl}`);
+      console.log(`[Puppeteer] Launching headless browser for: ${reelsTabUrl}`);
 
-      let htmlContent = '';
+      browser = await puppeteer.launch({
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-gpu',
+          '--disable-notifications',
+          '--window-size=1280,800',
+        ],
+      });
+
+      const page = await browser.newPage();
+      await page.setUserAgent(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+      );
+      await page.setViewport({ width: 1280, height: 900 });
+
       try {
-        const response = await fetch(reelsTabUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-          },
-        });
-        htmlContent = await response.text();
-      } catch (fetchErr) {
-        console.warn('Direct fetch error:', fetchErr);
+        await page.goto(reelsTabUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      } catch (navErr) {
+        console.warn('Navigation timeout/redirect:', navErr);
       }
 
-      // Extract reel links using regex from HTML
-      const uniqueMap = new Map<string, string>();
-      const regex = /(?:facebook\.com\/reel\/|\/reel\/|watch\/\?v=)(\d+)/gi;
-      let match;
-      while ((match = regex.exec(htmlContent)) !== null) {
-        const id = match[1];
-        if (id && id.length > 5) {
-          uniqueMap.set(id, `https://www.facebook.com/reel/${id}/`);
-        }
-      }
+      await new Promise((r) => setTimeout(r, 4000));
 
-      // If login wall or restricted HTML returned 0 links, use Gemini AI to generate / retrieve structured Reels sample for this profile ID
-      if (uniqueMap.size === 0) {
-        try {
-          const aiRes = await ai.models.generateContent({
-            model: 'gemini-3.8-flash',
-            contents: `Generate 10 realistic Facebook Reel URLs for profile ID ${profileId} (URL: ${reelsTabUrl}). Return JSON array of strings: ["https://www.facebook.com/reel/123...", ...]`,
-            config: { responseMimeType: 'application/json' },
-          });
-          const aiLinks = JSON.parse(aiRes.text || '[]');
-          if (Array.isArray(aiLinks)) {
-            aiLinks.forEach((link: string) => {
-              const m = link.match(/\/reel\/(\d+)/i);
-              if (m) uniqueMap.set(m[1], link);
-            });
+      const extractedLinks = await page.evaluate(async function() {
+        function closePopup() {
+          var visible = function(el: any) {
+            var r = el.getBoundingClientRect();
+            var s = window.getComputedStyle(el);
+            return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
+          };
+          var dialogs = Array.prototype.slice.call(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))
+            .filter(visible);
+          var roots = dialogs.length ? dialogs : [document];
+          var closeBtn: any = null;
+          for (var i = 0; i < roots.length; i++) {
+            var btns = roots[i].querySelectorAll('[aria-label="Close"], [aria-label="close"], button');
+            for (var j = 0; j < btns.length; j++) {
+              if (visible(btns[j]) && /^(close|đóng|dismiss)$/i.test(btns[j].getAttribute('aria-label') || '')) {
+                closeBtn = btns[j];
+                break;
+              }
+            }
+            if (closeBtn) break;
           }
-        } catch (aiErr) {
-          // Fallback sample if AI fails
-          const sampleId = profileId.replace(/\D/g, '') || '61580646125999';
-          uniqueMap.set(sampleId + '1', `https://www.facebook.com/reel/${sampleId}1/`);
-          uniqueMap.set(sampleId + '2', `https://www.facebook.com/reel/${sampleId}2/`);
-          uniqueMap.set(sampleId + '3', `https://www.facebook.com/reel/${sampleId}3/`);
+          if (closeBtn) {
+            closeBtn.click();
+            return true;
+          }
+          return false;
         }
-      }
 
-      const links = [...uniqueMap.values()];
+        closePopup();
+        await new Promise(function(r) { setTimeout(r, 1000); });
+        closePopup();
+
+        var seen = new Map();
+        var scan = function() {
+          var anchors = document.querySelectorAll('a[href]');
+          for (var a = 0; a < anchors.length; a++) {
+            try {
+              var href = anchors[a].getAttribute('href') || '';
+              var m = href.match(/\/reel\/(\d+)/i);
+              if (m) {
+                seen.set(m[1], 'https://www.facebook.com/reel/' + m[1] + '/');
+              }
+            } catch (e) {}
+          }
+        };
+
+        scan();
+
+        var maxSteps = 30;
+        var idleLimit = 5;
+        var idle = 0;
+        var prevCount = seen.size;
+
+        for (var step = 1; step <= maxSteps && idle < idleLimit; step++) {
+          closePopup();
+          window.scrollBy({ top: 1200, behavior: 'smooth' });
+          window.dispatchEvent(new WheelEvent('wheel', { deltaY: 1200 }));
+
+          await new Promise(function(r) { setTimeout(r, 2000); });
+          scan();
+
+          var currCount = seen.size;
+          if (currCount > prevCount) {
+            idle = 0;
+          } else {
+            idle++;
+          }
+          prevCount = currCount;
+        }
+
+        var result: string[] = [];
+        seen.forEach(function(url) {
+          result.push(url);
+        });
+        return result;
+      });
+
+      await browser.close();
 
       res.json({
         success: true,
         profileId,
         reelsTabUrl,
-        count: links.length,
-        links,
+        count: extractedLinks.length,
+        links: extractedLinks,
       });
     } catch (error: any) {
-      console.error('Scrape reels error:', error);
-      res.status(500).json({ error: error.message || 'Failed to extract reels' });
+      if (browser) {
+        try { await browser.close(); } catch (_) {}
+      }
+      console.error('Puppeteer scrape reels error:', error);
+      res.status(500).json({ error: error.message || 'Failed to scrape reels via headless browser' });
     }
   });
 
