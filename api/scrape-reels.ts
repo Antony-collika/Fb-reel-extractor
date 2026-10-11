@@ -55,7 +55,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     }
     await new Promise((resolve) => setTimeout(resolve, 1800));
 
-    const result = await page.evaluate(async () => {
+    const result = await page.evaluate(async function () {
       type LogEntry = { time: string; msg: string; meta: Record<string, unknown> };
       const debugLogs: LogEntry[] = [];
       function log(msg: string, meta: Record<string, unknown> = {}) {
