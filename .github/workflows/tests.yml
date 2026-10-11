@@ -19,3 +19,19 @@ jobs:
       - run: npm install
       - run: npm test
       - run: npm run lint
+
+  live-reels-acceptance:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install
+      - name: Test public Professor-Glitch profile (pass requires >60 Reels)
+        run: npm run test:live
