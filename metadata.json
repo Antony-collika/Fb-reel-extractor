@@ -1,0 +1,6 @@
+{
+  "name": "NetProbe & Social Link Inspector",
+  "description": "Comprehensive URL inspector, website status checker, social link validator, and AI-powered network connectivity assistant.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
