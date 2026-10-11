@@ -9,7 +9,8 @@
     "start": "tsx server.ts",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:live": "node --import tsx scripts/test-live-reels.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
