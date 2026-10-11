@@ -25,7 +25,7 @@ test('supports Facebook people profile URLs', () => {
 });
 
 test('accepts Facebook subdomains but rejects lookalike or external hosts', () => {
-  assert.equal(buildReelsTabUrl('https://m.facebook.com/example').reelsTabUrl, 'https://www.facebook.com/m.facebook.com/example/reels/'.replace('/m.facebook.com', ''));
+  assert.equal(buildReelsTabUrl('https://m.facebook.com/example').reelsTabUrl, 'https://www.facebook.com/example/reels/');
   assert.throws(() => buildReelsTabUrl('https://facebook.com.attacker.example/user'), /Facebook/i);
   assert.throws(() => buildReelsTabUrl('https://example.com/user'), /Facebook/i);
 });
