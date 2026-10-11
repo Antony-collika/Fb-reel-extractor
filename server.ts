@@ -3,58 +3,31 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import puppeteer from 'puppeteer';
+import { buildReelsTabUrl } from './reels-url.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function startServer() {
   const app = express();
-  app.use(express.json());
-
+  app.use(express.json({ limit: '32kb' }));
   const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-  function buildReelsTabUrl(inputUrl: string): { profileId: string; reelsTabUrl: string } {
-    let clean = inputUrl.trim();
-    if (!clean.startsWith('http')) {
-      clean = 'https://' + clean;
-    }
-    try {
-      const u = new URL(clean);
-      const idParam = u.searchParams.get('id');
-      const peopleMatch = u.pathname.match(/\/people\/[^/]+\/(\d+)/i);
-      const profileId = idParam || (peopleMatch ? peopleMatch[1] : null);
-
-      if (profileId) {
-        return {
-          profileId,
-          reelsTabUrl: `https://www.facebook.com/profile.php?id=${profileId}&sk=reels_tab`,
-        };
-      } else {
-        const cleanPath = u.pathname.replace(/\/$/, '');
-        return {
-          profileId: cleanPath.split('/').pop() || 'unknown',
-          reelsTabUrl: `https://www.facebook.com${cleanPath}/reels/`,
-        };
-      }
-    } catch (e) {
-      return {
-        profileId: '61580646125999',
-        reelsTabUrl: 'https://www.facebook.com/profile.php?id=61580646125999&sk=reels_tab',
-      };
-    }
-  }
-
-  // Robust POST endpoint for headless browser scraping
   app.post('/api/scrape-reels', async (req, res) => {
-    let browser;
+    let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
     try {
-      const { profileUrl } = req.body;
-      if (!profileUrl) {
+      const profileUrl = typeof req.body?.profileUrl === 'string' ? req.body.profileUrl : '';
+      if (!profileUrl.trim()) {
         return res.status(400).json({ error: 'Profile URL is required' });
       }
 
-      const { profileId, reelsTabUrl } = buildReelsTabUrl(profileUrl);
-
-      console.log(`[Puppeteer] Launching headless browser for: ${reelsTabUrl}`);
+      let target: { profileId: string; reelsTabUrl: string };
+      try {
+        target = buildReelsTabUrl(profileUrl);
+      } catch (error: any) {
+        return res.status(400).json({ error: error.message || 'Facebook profile URL is invalid' });
+      }
+      const { profileId, reelsTabUrl } = target;
+      console.log(`[Puppeteer] Opening Reels list: ${reelsTabUrl}`);
 
       browser = await puppeteer.launch({
         headless: true,
@@ -69,176 +42,195 @@ async function startServer() {
       });
 
       const page = await browser.newPage();
-      await page.setUserAgent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-      );
+      page.setDefaultNavigationTimeout(45000);
+      page.setDefaultTimeout(12000);
       await page.setViewport({ width: 1280, height: 1024 });
+      await page.setUserAgent(
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+      );
 
       try {
-        await page.goto(reelsTabUrl, { waitUntil: 'networkidle2', timeout: 35000 });
-      } catch (navErr) {
-        console.warn('Navigation networkidle2 timeout:', navErr);
+        // Facebook often keeps network requests open indefinitely; don't wait for networkidle.
+        await page.goto(reelsTabUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+      } catch (error) {
+        console.warn('[Puppeteer] Navigation did not finish cleanly:', error);
       }
 
-      try {
-        await page.waitForSelector('a[href*="/reel/"]', { timeout: 10000 });
-      } catch (e) {
-        console.warn('Initial reels selector wait timeout.');
-      }
+      await new Promise((resolve) => setTimeout(resolve, 2500));
 
-      await new Promise((r) => setTimeout(r, 3000));
+      const evaluationResult = await page.evaluate(async () => {
+        type LogEntry = { time: string; msg: string; meta: Record<string, unknown> };
+        const debugLogs: LogEntry[] = [];
+        const log = (msg: string, meta: Record<string, unknown> = {}) => {
+          debugLogs.push({ time: new Date().toISOString(), msg, meta });
+        };
+        const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-      const evaluationResult: any = await page.evaluate(`
-        (async function() {
-          var debugLogs = [];
-          var log = function(msg, meta) {
-            debugLogs.push({ time: new Date().toISOString(), msg: msg, meta: meta || {} });
-          };
+        const isVisible = (element: Element) => {
+          const rect = element.getBoundingClientRect();
+          const style = window.getComputedStyle(element);
+          return rect.width > 0 && rect.height > 0 &&
+            style.display !== 'none' && style.visibility !== 'hidden' &&
+            Number(style.opacity || 1) > 0;
+        };
 
-          function closePopup() {
-            var visible = function(el) {
-              var r = el.getBoundingClientRect();
-              var s = window.getComputedStyle(el);
-              return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
-            };
-            var dialogs = Array.prototype.slice.call(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))
-              .filter(visible);
-            var roots = dialogs.length ? dialogs : [document];
-            var closeBtn = null;
-            for (var i = 0; i < roots.length; i++) {
-              var btns = roots[i].querySelectorAll('[aria-label="Close"], [aria-label="close"]');
-              for (var j = 0; j < btns.length; j++) {
-                if (visible(btns[j]) && /^(close|đóng|dismiss)$/i.test(btns[j].getAttribute('aria-label') || '')) {
-                  closeBtn = btns[j];
-                  break;
-                }
-              }
-              if (closeBtn) break;
-            }
-            if (closeBtn) {
-              closeBtn.click();
-              log('Closed popup dialog');
+        const closePopups = () => {
+          const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))
+            .filter(isVisible);
+          for (const dialog of dialogs) {
+            const close = dialog.querySelector(
+              '[aria-label="Close"], [aria-label="close"], [aria-label="Đóng"], [data-testid="close-button"]'
+            );
+            if (close && isVisible(close)) {
+              (close as HTMLElement).click();
+              log('Closed visible dialog');
               return true;
             }
-            return false;
+          }
+          return false;
+        };
+
+        const getReelUrl = (anchor: HTMLAnchorElement): { id: string; url: string } | null => {
+          try {
+            const url = new URL(anchor.href, location.href);
+            if (!/(^|\.)facebook\.com$/i.test(url.hostname)) return null;
+            const match = url.pathname.match(/\/reel\/([0-9]+)/i);
+            if (!match) return null;
+            return { id: match[1], url: `https://www.facebook.com/reel/${match[1]}/` };
+          } catch {
+            return null;
+          }
+        };
+
+        const seen = new Map<string, string>();
+        const scan = () => {
+          const anchors = document.querySelectorAll<HTMLAnchorElement>('a[href]');
+          for (const anchor of anchors) {
+            const reel = getReelUrl(anchor);
+            if (reel && !seen.has(reel.id)) seen.set(reel.id, reel.url);
+          }
+          return seen.size;
+        };
+
+        closePopups();
+        await pause(800);
+        closePopups();
+        scan();
+
+        // Prefer a scrollable ancestor that actually contains Reel links. Facebook changes
+        // its internal DOM often, so avoid relying on a single undocumented selector.
+        const findScroller = (): HTMLElement | null => {
+          const preferred = document.querySelector<HTMLElement>('#scrollview');
+          if (preferred && preferred.scrollHeight > preferred.clientHeight + 100) return preferred;
+
+          const candidates = Array.from(document.querySelectorAll<HTMLElement>('main, [role="main"], div, section'))
+            .filter((el) => {
+              const style = getComputedStyle(el);
+              return /(auto|scroll)/i.test(style.overflowY) &&
+                el.scrollHeight > el.clientHeight + 150 &&
+                el.querySelector('a[href*="/reel/"]') !== null;
+            });
+          candidates.sort((a, b) => {
+            const aCount = a.querySelectorAll('a[href*="/reel/"]').length;
+            const bCount = b.querySelectorAll('a[href*="/reel/"]').length;
+            return bCount - aCount || b.scrollHeight - a.scrollHeight;
+          });
+          return candidates[0] || null;
+        };
+
+        const scroller = findScroller();
+        const useWindow = !scroller;
+        const getMetrics = () => ({
+          top: useWindow ? window.scrollY : scroller!.scrollTop,
+          clientHeight: useWindow ? window.innerHeight : scroller!.clientHeight,
+          scrollHeight: useWindow
+            ? Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0)
+            : scroller!.scrollHeight,
+        });
+
+        log('Initial scan complete', {
+          count: seen.size,
+          scroller: useWindow ? 'window' : scroller!.id || scroller!.tagName.toLowerCase(),
+        });
+
+        let idleSteps = 0;
+        let previousCount = seen.size;
+        let previousHeight = getMetrics().scrollHeight;
+        const maxSteps = 180;
+        const idleLimit = 8;
+
+        for (let step = 1; step <= maxSteps && idleSteps < idleLimit; step++) {
+          closePopups();
+          const before = getMetrics();
+          const amount = Math.max(350, Math.floor(before.clientHeight * 0.78));
+
+          if (useWindow) {
+            window.scrollTo({ top: before.top + amount, behavior: 'instant' });
+            window.dispatchEvent(new WheelEvent('wheel', { deltaY: amount, bubbles: true }));
+          } else {
+            scroller!.scrollTop = Math.min(before.top + amount, before.scrollHeight);
+            scroller!.dispatchEvent(new Event('scroll', { bubbles: true }));
+            scroller!.dispatchEvent(new WheelEvent('wheel', { deltaY: amount, bubbles: true }));
           }
 
-          closePopup();
-          await new Promise(function(r) { setTimeout(r, 1200); });
-          closePopup();
+          await pause(1800);
+          closePopups();
+          const currentCount = scan();
+          const after = getMetrics();
+          const added = currentCount - previousCount;
+          const heightChanged = after.scrollHeight !== previousHeight;
 
-          var scroller = document.querySelector('#scrollview');
-          if (!scroller) {
-            var all = document.querySelectorAll('*');
-            for (var k = 0; k < all.length; k++) {
-              var s = window.getComputedStyle(all[k]);
-              if (/(auto|scroll)/.test(s.overflowY) && all[k].scrollHeight > all[k].clientHeight + 150) {
-                scroller = all[k];
-                break;
-              }
-            }
-          }
-          if (!scroller || scroller === document.body || scroller === document.documentElement) {
-            scroller = window;
-          }
-
-          log('Scroller identified', { tag: scroller === window ? 'window' : scroller.tagName });
-
-          var seen = new Map();
-          var scan = function() {
-            var anchors = document.querySelectorAll('a[href]');
-            for (var a = 0; a < anchors.length; a++) {
-              try {
-                var href = anchors[a].getAttribute('href') || '';
-                var m = href.match(/\\/reel\\/(\\d+)/i);
-                if (m) {
-                  seen.set(m[1], 'https://www.facebook.com/reel/' + m[1] + '/');
-                }
-              } catch (e) {}
-            }
-          };
-
-          scan();
-          log('Initial scan count', { count: seen.size });
-
-          var maxSteps = 150;
-          var idleLimit = 12;
-          var idle = 0;
-          var prevCount = seen.size;
-          var prevHeight = scroller === window ? document.body.scrollHeight : scroller.scrollHeight;
-
-          for (var step = 1; step <= maxSteps && idle < idleLimit; step++) {
-            closePopup();
-
-            var clientH = scroller === window ? window.innerHeight : scroller.clientHeight;
-            var scrollH = scroller === window ? document.body.scrollHeight : scroller.scrollHeight;
-            var scrollT = scroller === window ? window.scrollY : scroller.scrollTop;
-
-            var amount = Math.max(300, Math.floor(clientH * 0.65));
-
-            if (scroller === window) {
-              window.scrollBy({ top: amount, behavior: 'smooth' });
-              window.dispatchEvent(new WheelEvent('wheel', { deltaY: amount }));
-            } else {
-              scroller.scrollTop = Math.min(scrollT + amount, scrollH);
-              scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
-            }
-
-            await new Promise(function(r) { setTimeout(r, 2500); });
-            scan();
-
-            var currCount = seen.size;
-            var currHeight = scroller === window ? document.body.scrollHeight : scroller.scrollHeight;
-
-            var newLinksAdded = currCount - prevCount;
-            var heightChanged = currHeight !== prevHeight;
-
-            if (newLinksAdded > 0 || heightChanged) {
-              idle = 0;
-            } else {
-              idle++;
-            }
-
-            log('Step execution', { step: step, count: currCount, added: newLinksAdded, height: currHeight, idle: idle });
-
-            prevCount = currCount;
-            prevHeight = currHeight;
-
-            if (scrollT + clientH >= scrollH - 50 && idle >= 4) {
-              break;
-            }
-          }
-
-          var result = [];
-          seen.forEach(function(url) {
-            result.push(url);
+          idleSteps = added > 0 || heightChanged ? 0 : idleSteps + 1;
+          log('Scroll scan', {
+            step,
+            count: currentCount,
+            added,
+            scrollHeight: after.scrollHeight,
+            idleSteps,
           });
 
-          return {
-            links: result,
-            debugLogs: debugLogs,
-            status: idle >= idleLimit ? 'stopped_idle_limit' : 'stopped_max_steps'
-          };
-        })()
-      `);
+          previousCount = currentCount;
+          previousHeight = after.scrollHeight;
+
+          const atBottom = after.top + after.clientHeight >= after.scrollHeight - 80;
+          if (atBottom && idleSteps >= 3) break;
+        }
+
+        const pageState = /\/checkpoint\//i.test(location.pathname)
+          ? 'checkpoint'
+          : /\/login(?:\/|$)/i.test(location.pathname)
+            ? 'login_required'
+            : 'loaded';
+
+        return {
+          links: Array.from(seen.values()),
+          debugLogs,
+          status: idleSteps >= idleLimit ? 'stopped_idle_limit' : 'stopped_after_scrolling',
+          pageState,
+          finalUrl: location.href,
+        };
+      });
 
       await browser.close();
+      browser = undefined;
 
       res.json({
         success: true,
         profileId,
         reelsTabUrl,
-        count: (evaluationResult.links || []).length,
-        links: evaluationResult.links || [],
-        debugLogs: evaluationResult.debugLogs || [],
-        status: evaluationResult.status || 'completed',
+        count: evaluationResult.links.length,
+        links: evaluationResult.links,
+        debugLogs: evaluationResult.debugLogs,
+        status: evaluationResult.status,
+        pageState: evaluationResult.pageState,
+        finalUrl: evaluationResult.finalUrl,
       });
     } catch (error: any) {
       if (browser) {
-        try { await browser.close(); } catch (_) {}
+        try { await browser.close(); } catch { /* browser may already be closed */ }
       }
       console.error('Puppeteer scrape reels error:', error);
-      res.status(500).json({ error: error.message || 'Failed to scrape reels via headless browser' });
+      res.status(500).json({ error: error.message || 'Failed to scrape Reels list' });
     }
   });
 
@@ -251,9 +243,7 @@ async function startServer() {
   } else {
     const distPath = path.resolve(__dirname, 'dist');
     app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.resolve(distPath, 'index.html'));
-    });
+    app.get('*', (_req, res) => res.sendFile(path.resolve(distPath, 'index.html')));
   }
 
   app.listen(PORT, '0.0.0.0', () => {

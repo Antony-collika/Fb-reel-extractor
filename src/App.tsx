@@ -58,8 +58,32 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ profileUrl }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to scrape reels');
+      const responseText = await res.text();
+      let data: any;
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        const preview = responseText
+          .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+          .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+          .replace(/<[^>]+>/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .slice(0, 220);
+
+        if (res.status === 404 || /<html|<!doctype html/i.test(responseText)) {
+          throw new Error(
+            'Máy chủ không trả về API /api/scrape-reels (HTTP ' + res.status + '). Có thể bản deploy hiện chỉ chạy giao diện Vite, chưa triển khai backend Puppeteer. Cần cấu hình endpoint API trên máy chủ trước khi cào được Reels.' +
+            (preview ? ' Chi tiết: ' + preview : '')
+          );
+        }
+
+        throw new Error(
+          'Máy chủ trả về dữ liệu không phải JSON (HTTP ' + res.status + ').' +
+          (preview ? ' Phản hồi: ' + preview : '')
+        );
+      }
+      if (!res.ok) throw new Error(data?.error || 'Không cào được Reels (HTTP ' + res.status + ')');
 
       setReelsTabUrl(data.reelsTabUrl || '');
       const formattedReels: ReelItem[] = (data.links || []).map((link: string) => {
