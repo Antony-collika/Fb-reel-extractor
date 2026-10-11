@@ -31,7 +31,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
       - run: npm install
       - name: Test public Professor-Glitch profile (pass requires >60 Reels)
         run: npm run test:live
