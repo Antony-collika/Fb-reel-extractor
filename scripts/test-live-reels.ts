@@ -10,6 +10,7 @@ type Payload = {
   status?: string;
   finalUrl?: string;
   error?: string;
+  debugLogs?: Array<{ time: string; msg: string; meta: Record<string, unknown> }>;
 };
 
 const response = {
