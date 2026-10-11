@@ -49,6 +49,7 @@ try {
     pageState: result.pageState ?? null,
     scraperStatus: result.status ?? null,
     finalUrl: result.finalUrl ?? null,
+    debugLogs: result.debugLogs ?? [],
     elapsedSeconds,
     error: result.error ?? null,
   }, null, 2));
