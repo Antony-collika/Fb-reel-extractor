@@ -58,18 +58,20 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     const result = await page.evaluate(async () => {
       type LogEntry = { time: string; msg: string; meta: Record<string, unknown> };
       const debugLogs: LogEntry[] = [];
-      const log = (msg: string, meta: Record<string, unknown> = {}) => {
+      function log(msg: string, meta: Record<string, unknown> = {}) {
         debugLogs.push({ time: new Date().toISOString(), msg, meta });
-      };
-      const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-      const visible = (element: Element) => {
+      }
+      function pause(ms: number): Promise<void> {
+        return new Promise<void>((resolve) => setTimeout(resolve, ms));
+      }
+      function visible(element: Element) {
         const rect = element.getBoundingClientRect();
         const style = getComputedStyle(element);
         return rect.width > 0 && rect.height > 0 &&
           style.display !== 'none' && style.visibility !== 'hidden' &&
           Number(style.opacity || 1) > 0;
-      };
-      const closePopups = () => {
+      }
+      function closePopups() {
         const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]')).filter(visible);
         for (const dialog of dialogs) {
           const button = dialog.querySelector(
@@ -81,9 +83,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
             return;
           }
         }
-      };
+      }
       const seen = new Map<string, string>();
-      const scan = () => {
+      function scan() {
         for (const anchor of document.querySelectorAll<HTMLAnchorElement>('a[href]')) {
           try {
             const url = new URL(anchor.href, location.href);
@@ -97,8 +99,8 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           }
         }
         return seen.size;
-      };
-      const findScroller = (): HTMLElement | null => {
+      }
+      function findScroller(): HTMLElement | null {
         const preferred = document.querySelector<HTMLElement>('#scrollview');
         if (preferred && preferred.scrollHeight > preferred.clientHeight + 100) return preferred;
         const candidates = Array.from(document.querySelectorAll<HTMLElement>('main, [role="main"], div, section'))
@@ -113,20 +115,22 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
           b.scrollHeight - a.scrollHeight
         );
         return candidates[0] || null;
-      };
+      }
 
       closePopups();
       await pause(500);
       scan();
       const scroller = findScroller();
       const useWindow = !scroller;
-      const metrics = () => ({
-        top: useWindow ? window.scrollY : scroller!.scrollTop,
-        clientHeight: useWindow ? window.innerHeight : scroller!.clientHeight,
-        scrollHeight: useWindow
-          ? Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0)
-          : scroller!.scrollHeight,
-      });
+      function metrics() {
+        return {
+          top: useWindow ? window.scrollY : scroller!.scrollTop,
+          clientHeight: useWindow ? window.innerHeight : scroller!.clientHeight,
+          scrollHeight: useWindow
+            ? Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0)
+            : scroller!.scrollHeight,
+        };
+      }
       let idleSteps = 0;
       let previousCount = seen.size;
       let previousHeight = metrics().scrollHeight;
