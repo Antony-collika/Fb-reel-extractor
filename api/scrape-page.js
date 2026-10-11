@@ -88,8 +88,8 @@ export async function scrapePage() {
   let idleSteps = 0;
   let previousCount = seen.size;
   let previousHeight = metrics().scrollHeight;
-  const maxSteps = 24;
-  const idleLimit = 5;
+  const maxSteps = 28;
+  const idleLimit = 12;
   log('Initial scan complete', { count: seen.size, scroller: useWindow ? 'window' : scroller.id || scroller.tagName.toLowerCase() });
 
   for (let step = 1; step <= maxSteps && idleSteps < idleLimit; step++) {
@@ -117,7 +117,7 @@ export async function scrapePage() {
     previousCount = count;
     previousHeight = after.scrollHeight;
 
-    if (after.top + after.clientHeight >= after.scrollHeight - 80 && idleSteps >= 2) break;
+    if (after.top + after.clientHeight >= after.scrollHeight - 80 && idleSteps >= 8) break;
   }
 
   const pageState = /\/checkpoint\//i.test(location.pathname)
