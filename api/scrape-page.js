@@ -20,21 +20,6 @@ function inspectLoginPopup() {
   return { visible: false, closable: false, text: '' };
 }
 
-function closeVisiblePopup() {
-  const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))
-    .filter(isVisible);
-  for (const dialog of dialogs) {
-    const buttons = dialog.querySelectorAll('[aria-label], button, [role="button"]');
-    for (const button of buttons) {
-      if (isVisible(button) && /^(close|đóng|dismiss)$/i.test(button.getAttribute('aria-label') || '')) {
-        button.click();
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
 function getPageSnapshot() {
   const visible = (element) => {
     const rect = element.getBoundingClientRect();
@@ -157,9 +142,6 @@ async function dragScrollbar(page, useWindow, scroller, before) {
     await page.mouse.down();
     await page.mouse.move(trackX, endY, { steps: 8 });
     await page.mouse.up();
-    // Headless Chromium may render the scrollbar without accepting a drag at
-    // the calculated track coordinate. Keep the real drag attempt, then use
-    // a wheel event if the next scan shows that the page did not move.
     return { method: 'right-scrollbar-drag', amount: endY - startY, startY, endY };
   }
 
@@ -173,6 +155,7 @@ export async function scrapePage(page, options = {}) {
     knownLinks = [],
     resumeAfterId = null,
     deadline = Date.now() + 30000,
+    noScroll = false,
     onLink = () => {},
     onProgress = () => {},
   } = options;
@@ -199,20 +182,23 @@ export async function scrapePage(page, options = {}) {
   log('Initial scan complete', {
     count: seen.size, pageState: snapshot.pageState,
     popup: snapshot.loginPopup, scrollHeight: snapshot.scrollHeight,
+    clientHeight: snapshot.clientHeight, finalUrl: snapshot.finalUrl, title: snapshot.title,
+    mode: noScroll ? 'no-scroll-viewport-experiment' : 'scroll',
   });
-  onProgress({ phase: 'initial_scan', count: seen.size, pageState: snapshot.pageState });
+  onProgress({ phase: 'initial_scan', count: seen.size, pageState: snapshot.pageState, mode: noScroll ? 'no-scroll-viewport-experiment' : 'scroll' });
 
-  const scroller = await page.evaluateHandle(findScrollableContainer);
-  const scrollerElement = scroller.asElement();
+  const scroller = noScroll ? null : await page.evaluateHandle(findScrollableContainer);
+  const scrollerElement = scroller?.asElement() || null;
   const useWindow = !scrollerElement;
   let idleSteps = 0;
   let previousCount = seen.size;
   let lastHeight = snapshot.scrollHeight;
-  const maxSteps = 60;
-  const idleLimit = 8;
+  const maxSteps = noScroll ? 12 : 60;
+  const idleLimit = noScroll ? 4 : 8;
   let stopReason = 'natural';
-  
-  if (resumeAfterId) {
+
+  // Experiment B intentionally avoids all scrolling and resume-anchor restoration.
+  if (!noScroll && resumeAfterId) {
     let anchorFound = false;
     for (let attempt = 0; attempt < 14 && Date.now() < deadline - 3500; attempt++) {
       anchorFound = await page.evaluate((id) => {
@@ -258,22 +244,26 @@ export async function scrapePage(page, options = {}) {
         (snapshot.pageState === 'login_popup_blocked' && !snapshot.loginPopup.closable)) {
       log('Stopped because Facebook blocked further browsing', {
         step, pageState: snapshot.pageState, popup: snapshot.loginPopup, count: seen.size,
+        finalUrl: snapshot.finalUrl, title: snapshot.title,
       });
       break;
     }
 
     const before = await page.evaluate(getMetrics, useWindow, scrollerElement);
-    let scrollAction = await dragScrollbar(page, useWindow, scrollerElement, before);
-    if (useWindow) {
-      const movedAfterDrag = await page.evaluate(() => window.scrollY);
-      if (movedAfterDrag <= before.top + 8 && before.top + before.clientHeight < before.scrollHeight - 80) {
-        const fallbackAmount = Math.max(420, Math.floor(before.clientHeight * 0.92));
-        await page.mouse.move(Math.floor((page.viewport()?.width || 1280) / 2), Math.floor((page.viewport()?.height || 1024) / 2));
-        await page.mouse.wheel({ deltaY: fallbackAmount });
-        scrollAction = { ...scrollAction, fallback: 'wheel', fallbackAmount };
+    let scrollAction = { method: 'none-no-scroll-experiment' };
+    if (!noScroll) {
+      scrollAction = await dragScrollbar(page, useWindow, scrollerElement, before);
+      if (useWindow) {
+        const movedAfterDrag = await page.evaluate(() => window.scrollY);
+        if (movedAfterDrag <= before.top + 8 && before.top + before.clientHeight < before.scrollHeight - 80) {
+          const fallbackAmount = Math.max(420, Math.floor(before.clientHeight * 0.92));
+          await page.mouse.move(Math.floor((page.viewport()?.width || 1280) / 2), Math.floor((page.viewport()?.height || 1024) / 2));
+          await page.mouse.wheel({ deltaY: fallbackAmount });
+          scrollAction = { ...scrollAction, fallback: 'wheel', fallbackAmount };
+        }
       }
     }
-    await pause(1800);
+    await pause(noScroll ? 1400 : 1800);
 
     snapshot = await page.evaluate(getPageSnapshot);
     const count = mergeLinks(snapshot);
@@ -281,21 +271,27 @@ export async function scrapePage(page, options = {}) {
     const added = count - previousCount;
     const heightChanged = after.scrollHeight !== lastHeight;
     idleSteps = added > 0 || heightChanged ? 0 : idleSteps + 1;
-    log('Continuous browser scroll scan', {
+    log(noScroll ? 'No-scroll viewport scan' : 'Continuous browser scroll scan', {
       step, count, added, heightChanged, idleSteps, scrollAction,
       before, after, pageState: snapshot.pageState, popup: snapshot.loginPopup,
+      finalUrl: snapshot.finalUrl, title: snapshot.title,
     });
     previousCount = count;
     lastHeight = after.scrollHeight;
-    onProgress({ phase: 'scroll', step, count, added, idleSteps, scrollY: after.top, pageState: snapshot.pageState });
+    onProgress({ phase: noScroll ? 'no_scroll_scan' : 'scroll', step, count, added, idleSteps, scrollY: after.top, pageState: snapshot.pageState, mode: noScroll ? 'no-scroll-viewport-experiment' : 'scroll' });
 
     if (snapshot.pageState === 'login_popup_blocked' || snapshot.pageState === 'checkpoint' || snapshot.pageState === 'login_required') break;
     const atBottom = after.top + after.clientHeight >= after.scrollHeight - 80;
-    if (atBottom && idleSteps >= 3) break;
+    if (!noScroll && atBottom && idleSteps >= 3) break;
   }
 
   snapshot = await page.evaluate(getPageSnapshot);
   mergeLinks(snapshot);
+  log('Final page snapshot', {
+    count: seen.size, pageState: snapshot.pageState, finalUrl: snapshot.finalUrl,
+    title: snapshot.title, scrollY: snapshot.scrollY, scrollHeight: snapshot.scrollHeight,
+    clientHeight: snapshot.clientHeight, popup: snapshot.loginPopup,
+  });
   if (scrollerElement) await scroller.dispose();
 
   const status = stopReason === 'resume_anchor_not_found'
@@ -308,7 +304,7 @@ export async function scrapePage(page, options = {}) {
       ? 'stopped_checkpoint'
       : snapshot.pageState === 'login_required'
         ? 'stopped_login_required'
-        : idleSteps >= idleLimit ? 'stopped_idle_limit' : 'stopped_after_scrolling';
+        : idleSteps >= idleLimit ? 'stopped_idle_limit' : noScroll ? 'stopped_after_no_scroll_experiment' : 'stopped_after_scrolling';
 
   return {
     links: Array.from(seen.values()), debugLogs, status,
