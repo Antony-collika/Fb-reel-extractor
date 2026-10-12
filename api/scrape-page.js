@@ -158,9 +158,9 @@ export async function scrapePage(page, options = {}) {
     onProgress = () => {},
     shouldCancel = () => false,
     viewportGrowth = true,
-    initialViewportHeight = 50000,
-    viewportStep = 2000,
-    maxViewportHeight = 100000,
+    initialViewportHeight = 20000,
+    viewportStep = 500,
+    maxViewportHeight = 50000,
   } = options;
   const seen = new Map();
   const debugLogs = [];
