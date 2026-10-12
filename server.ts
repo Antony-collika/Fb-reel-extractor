@@ -45,7 +45,7 @@ async function startServer() {
           '--disable-dev-shm-usage',
           '--disable-gpu',
           '--disable-notifications',
-          '--window-size=1280,30000',
+          '--window-size=1280,12000',
         ],
       });
       if (clientDisconnected) {
@@ -56,7 +56,7 @@ async function startServer() {
       const page = await browser.newPage();
       page.setDefaultNavigationTimeout(18000);
       page.setDefaultTimeout(8000);
-      await page.setViewport({ width: 1280, height: 30000 });
+      await page.setViewport({ width: 1280, height: 12000 });
       await page.setUserAgent(
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
       );
@@ -83,6 +83,10 @@ async function startServer() {
 
       const evaluationResult = await scrapePage(page, {
         noScroll: false,
+        viewportGrowth: true,
+        initialViewportHeight: 12000,
+        viewportStep: 2000,
+        maxViewportHeight: 30000,
         deadline: Date.now() + 90000,
         shouldCancel: () => clientDisconnected,
         onLink: (url: string, meta: unknown) => send('link', { url, meta }),

@@ -157,6 +157,10 @@ export async function scrapePage(page, options = {}) {
     onLink = () => {},
     onProgress = () => {},
     shouldCancel = () => false,
+    viewportGrowth = true,
+    initialViewportHeight = 12000,
+    viewportStep = 2000,
+    maxViewportHeight = 30000,
   } = options;
   const seen = new Map();
   const debugLogs = [];
@@ -172,6 +176,13 @@ export async function scrapePage(page, options = {}) {
     return seen.size;
   };
 
+  if (viewportGrowth) {
+    const viewport = page.viewport() || { width: 1280, height: initialViewportHeight };
+    if (viewport.height !== initialViewportHeight) {
+      await page.setViewport({ width: viewport.width, height: initialViewportHeight });
+    }
+  }
+
   let snapshot = await page.evaluate(getPageSnapshot);
   mergeLinks(snapshot);
   log('Initial scan complete', {
@@ -182,7 +193,7 @@ export async function scrapePage(page, options = {}) {
   });
   onProgress({ phase: 'initial_scan', count: seen.size, pageState: snapshot.pageState, mode: noScroll ? 'no-scroll-viewport-experiment' : 'scroll' });
 
-  const scroller = noScroll ? null : await page.evaluateHandle(findScrollableContainer);
+  const scroller = (noScroll || viewportGrowth) ? null : await page.evaluateHandle(findScrollableContainer);
   const scrollerElement = scroller?.asElement() || null;
   const useWindow = !scrollerElement;
   let idleSteps = 0;
@@ -192,6 +203,7 @@ export async function scrapePage(page, options = {}) {
   const idleLimit = noScroll ? 3 : 8;
   let stopReason = 'natural';
 
+  try {
   for (let step = 1; step <= maxSteps && idleSteps < idleLimit; step++) {
     if (shouldCancel()) {
       stopReason = 'cancelled';
@@ -216,7 +228,16 @@ export async function scrapePage(page, options = {}) {
 
     const before = await page.evaluate(getMetrics, useWindow, scrollerElement);
     let scrollAction = { method: 'none-no-scroll-experiment' };
-    if (!noScroll) {
+    if (!noScroll && viewportGrowth) {
+      const viewport = page.viewport() || { width: 1280, height: initialViewportHeight };
+      const nextHeight = Math.min(viewport.height + viewportStep, maxViewportHeight);
+      if (nextHeight > viewport.height) {
+        await page.setViewport({ width: viewport.width, height: nextHeight });
+        scrollAction = { method: 'viewport-growth', from: viewport.height, to: nextHeight };
+      } else {
+        scrollAction = { method: 'viewport-growth-cap', height: viewport.height };
+      }
+    } else if (!noScroll) {
       scrollAction = await dragScrollbar(page, useWindow, scrollerElement, before);
       if (useWindow) {
         const movedAfterDrag = await page.evaluate(() => window.scrollY);
@@ -228,7 +249,7 @@ export async function scrapePage(page, options = {}) {
         }
       }
     }
-    await pause(noScroll ? 1400 : 1800);
+    await pause(noScroll ? 1400 : viewportGrowth ? 1200 : 1800);
     if (shouldCancel()) {
       stopReason = 'cancelled';
       log('Stopped because cancellation was requested after scroll wait', { step, count: seen.size });
@@ -254,9 +275,28 @@ export async function scrapePage(page, options = {}) {
     const atBottom = after.top + after.clientHeight >= after.scrollHeight - 80;
     if (!noScroll && atBottom && idleSteps >= 3) break;
   }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/target closed|session closed|browser has disconnected|connection closed/i.test(message)) {
+      stopReason = 'target_closed';
+      log('Browser target closed during scan; preserving partial results', { count: seen.size, error: message });
+    } else {
+      throw error;
+    }
+  }
 
-  snapshot = await page.evaluate(getPageSnapshot);
-  mergeLinks(snapshot);
+  try {
+    snapshot = await page.evaluate(getPageSnapshot);
+    mergeLinks(snapshot);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/target closed|session closed|browser has disconnected|connection closed/i.test(message)) {
+      stopReason = 'target_closed';
+      log('Final snapshot skipped because browser target is closed', { count: seen.size, error: message });
+    } else {
+      throw error;
+    }
+  }
   log('Final page snapshot', {
     count: seen.size, pageState: snapshot.pageState, finalUrl: snapshot.finalUrl,
     title: snapshot.title, scrollY: snapshot.scrollY, scrollHeight: snapshot.scrollHeight,
@@ -264,10 +304,12 @@ export async function scrapePage(page, options = {}) {
   });
   if (scrollerElement) await scroller.dispose();
 
-  const status = stopReason === 'cancelled'
-    ? 'stopped_cancelled'
-    : stopReason === 'time_budget'
-      ? 'stopped_time_budget'
+  const status = stopReason === 'target_closed'
+    ? 'stopped_target_closed'
+    : stopReason === 'cancelled'
+      ? 'stopped_cancelled'
+      : stopReason === 'time_budget'
+        ? 'stopped_time_budget'
       : snapshot.pageState === 'login_popup_blocked'
         ? 'stopped_login_popup_without_close'
         : snapshot.pageState === 'checkpoint'
