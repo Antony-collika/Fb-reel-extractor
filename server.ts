@@ -18,9 +18,9 @@ async function startServer() {
     try {
       const profileUrl = typeof req.body?.profileUrl === 'string' ? req.body.profileUrl : '';
       const knownLinks = Array.isArray(req.body?.knownLinks)
-        ? req.body.knownLinks.filter((link: unknown): link is string => typeof link === 'string' && /facebook\\.com\\/reel\\/\\d+/i.test(link)).slice(-5000)
+        ? req.body.knownLinks.filter((link: unknown): link is string => typeof link === 'string' && /facebook\.com\/reel\/\d+/i.test(link)).slice(-5000)
         : [];
-      const resumeAfterId = typeof req.body?.resumeAfterId === 'string' && /^\\d+$/.test(req.body.resumeAfterId)
+      const resumeAfterId = typeof req.body?.resumeAfterId === 'string' && /^\d+$/.test(req.body.resumeAfterId)
         ? req.body.resumeAfterId
         : null;
       if (!profileUrl.trim()) {
@@ -70,7 +70,7 @@ async function startServer() {
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no');
       res.flushHeaders();
-      const send = (event: string, data: unknown) => res.write(`event: ${event}\\ndata: ${JSON.stringify(data)}\\n\\n`);
+      const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
       const evaluationResult = await scrapePage(page, {
         knownLinks,
@@ -98,7 +98,7 @@ async function startServer() {
       }
       console.error('Puppeteer scrape reels error:', error);
       if (res.headersSent) {
-        res.write(`event: error\\ndata: ${JSON.stringify({ error: error.message || 'Failed to scrape Reels list' })}\\n\\n`);
+        res.write(`event: error\ndata: ${JSON.stringify({ error: error.message || 'Failed to scrape Reels list' })}\n\n`);
         res.end();
       } else {
         res.status(500).json({ error: error.message || 'Failed to scrape Reels list' });
