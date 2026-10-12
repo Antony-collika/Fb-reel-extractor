@@ -36,8 +36,42 @@ function closeVisiblePopup() {
 }
 
 function getPageSnapshot() {
-  const closedPopup = closeVisiblePopup();
-  const loginPopup = inspectLoginPopup();
+  const visible = (element) => {
+    const rect = element.getBoundingClientRect();
+    const style = getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 &&
+      style.display !== 'none' && style.visibility !== 'hidden' &&
+      Number(style.opacity || 1) > 0;
+  };
+  const inspectPopup = () => {
+    const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))
+      .filter(visible);
+    for (const dialog of dialogs) {
+      const text = (dialog.innerText || '').slice(0, 500);
+      const closeButton = Array.from(dialog.querySelectorAll('[role="button"], button, [aria-label]'))
+        .find((button) => visible(button) && /^(close|đóng|dismiss)$/i.test(button.getAttribute('aria-label') || ''));
+      if (/see more on facebook|log in to facebook|email address or phone number/i.test(text)) {
+        return { visible: true, closable: Boolean(closeButton), text };
+      }
+    }
+    return { visible: false, closable: false, text: '' };
+  };
+  const closePopup = () => {
+    const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))
+      .filter(visible);
+    for (const dialog of dialogs) {
+      const buttons = dialog.querySelectorAll('[aria-label], button, [role="button"]');
+      for (const button of buttons) {
+        if (visible(button) && /^(close|đóng|dismiss)$/i.test(button.getAttribute('aria-label') || '')) {
+          button.click();
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  const closedPopup = closePopup();
+  const loginPopup = inspectPopup();
   const links = new Map();
   for (const anchor of document.querySelectorAll('a[href]')) {
     try {
@@ -103,13 +137,13 @@ async function dragScrollbar(page, useWindow, scroller, before) {
     const box = await scroller.boundingBox();
     if (box) {
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-      await page.mouse.wheel({ deltaY: Math.max(300, Math.floor(before.clientHeight * 0.72)) });
-      return { method: 'container-wheel', amount: Math.max(300, Math.floor(before.clientHeight * 0.72)) };
+      await page.mouse.wheel({ deltaY: Math.max(420, Math.floor(before.clientHeight * 0.92)) });
+      return { method: 'container-wheel', amount: Math.max(420, Math.floor(before.clientHeight * 0.92)) };
     }
   }
 
   const viewport = page.viewport() || { width: 1280, height: 1024 };
-  const amount = Math.max(300, Math.floor(before.clientHeight * 0.72));
+  const amount = Math.max(420, Math.floor(before.clientHeight * 0.92));
   const trackX = Math.max(2, viewport.width - 4);
   const thumbHeight = Math.max(24, before.clientHeight * before.clientHeight / before.scrollHeight);
   const maxThumbTop = Math.max(1, before.clientHeight - thumbHeight);
@@ -123,6 +157,9 @@ async function dragScrollbar(page, useWindow, scroller, before) {
     await page.mouse.down();
     await page.mouse.move(trackX, endY, { steps: 8 });
     await page.mouse.up();
+    // Headless Chromium may render the scrollbar without accepting a drag at
+    // the calculated track coordinate. Keep the real drag attempt, then use
+    // a wheel event if the next scan shows that the page did not move.
     return { method: 'right-scrollbar-drag', amount: endY - startY, startY, endY };
   }
 
@@ -169,7 +206,16 @@ export async function scrapePage(page) {
     }
 
     const before = await page.evaluate(getMetrics, useWindow, scrollerElement);
-    const scrollAction = await dragScrollbar(page, useWindow, scrollerElement, before);
+    let scrollAction = await dragScrollbar(page, useWindow, scrollerElement, before);
+    if (useWindow) {
+      const movedAfterDrag = await page.evaluate(() => window.scrollY);
+      if (movedAfterDrag <= before.top + 8 && before.top + before.clientHeight < before.scrollHeight - 80) {
+        const fallbackAmount = Math.max(420, Math.floor(before.clientHeight * 0.92));
+        await page.mouse.move(Math.floor((page.viewport()?.width || 1280) / 2), Math.floor((page.viewport()?.height || 1024) / 2));
+        await page.mouse.wheel({ deltaY: fallbackAmount });
+        scrollAction = { ...scrollAction, fallback: 'wheel', fallbackAmount };
+      }
+    }
     await pause(1800);
 
     snapshot = await page.evaluate(getPageSnapshot);
