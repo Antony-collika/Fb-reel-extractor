@@ -76,7 +76,7 @@ async function startServer() {
         knownLinks,
         resumeAfterId,
         noScroll: false,
-        deadline: Date.now() + 55000,
+        deadline: Date.now() + 90000,
         onLink: (url: string, meta: unknown) => send('link', { url, meta }),
         onProgress: (progress: unknown) => send('progress', progress),
       });
