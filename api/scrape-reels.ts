@@ -34,8 +34,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return res.status(400).json({ error: message });
   }
 
-  const knownLinks = Array.isArray(req.body?.knownLinks)
-    ? req.body!.knownLinks.filter((link): link is string => typeof link === 'string' && /facebook\.com\/reel\/\d+/i.test(link)).slice(-5000)
+  const rawKnownLinks = req.body?.knownLinks;
+  const knownLinks = Array.isArray(rawKnownLinks)
+    ? rawKnownLinks.filter((link): link is string => typeof link === 'string' && /facebook\.com\/reel\/\d+/i.test(link)).slice(-5000)
     : [];
   const resumeAfterId = typeof req.body?.resumeAfterId === 'string' && /^\d+$/.test(req.body.resumeAfterId)
     ? req.body.resumeAfterId
