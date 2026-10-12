@@ -152,18 +152,13 @@ async function dragScrollbar(page, useWindow, scroller, before) {
 
 export async function scrapePage(page, options = {}) {
   const {
-    knownLinks = [],
-    resumeAfterId = null,
     deadline = Date.now() + 30000,
     noScroll = false,
     onLink = () => {},
     onProgress = () => {},
+    shouldCancel = () => false,
   } = options;
   const seen = new Map();
-  for (const url of knownLinks) {
-    const match = String(url).match(/\/reel\/(\d+)/i);
-    if (match) seen.set(match[1], `https://www.facebook.com/reel/${match[1]}/`);
-  }
   const debugLogs = [];
   const log = (msg, meta = {}) => debugLogs.push({ time: new Date().toISOString(), msg, meta });
   const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -197,41 +192,12 @@ export async function scrapePage(page, options = {}) {
   const idleLimit = noScroll ? 3 : 8;
   let stopReason = 'natural';
 
-  // Experiment B intentionally avoids all scrolling and resume-anchor restoration.
-  if (!noScroll && resumeAfterId) {
-    let anchorFound = false;
-    for (let attempt = 0; attempt < 14 && Date.now() < deadline - 3500; attempt++) {
-      anchorFound = await page.evaluate((id) => {
-        const anchor = Array.from(document.querySelectorAll('a[href]')).find((element) => {
-          try { return new URL(element.href, location.href).pathname.match(/^\/reel\/(\d+)/i)?.[1] === id; }
-          catch { return false; }
-        });
-        if (anchor) anchor.scrollIntoView({ block: 'center', behavior: 'instant' });
-        return Boolean(anchor);
-      }, String(resumeAfterId));
-      if (anchorFound) {
-        await pause(700);
-        snapshot = await page.evaluate(getPageSnapshot);
-        mergeLinks(snapshot);
-        log('Resume anchor restored', { resumeAfterId, attempt: attempt + 1, count: seen.size });
-        onProgress({ phase: 'resumed', count: seen.size, resumeAfterId });
-        break;
-      }
-      await page.mouse.move(640, 700);
-      await page.mouse.wheel({ deltaY: 1100 });
-      await pause(850);
-      snapshot = await page.evaluate(getPageSnapshot);
-      mergeLinks(snapshot);
-      if (snapshot.pageState === 'checkpoint' || snapshot.pageState === 'login_required' ||
-          (snapshot.pageState === 'login_popup_blocked' && !snapshot.loginPopup.closable)) break;
-    }
-    if (!anchorFound) {
-      stopReason = 'resume_anchor_not_found';
-      log('Resume anchor could not be restored', { resumeAfterId, count: seen.size });
-    }
-  }
-
   for (let step = 1; step <= maxSteps && idleSteps < idleLimit; step++) {
+    if (shouldCancel()) {
+      stopReason = 'cancelled';
+      log('Stopped because cancellation was requested', { step, count: seen.size });
+      break;
+    }
     if (stopReason === 'resume_anchor_not_found') break;
     if (Date.now() >= deadline - 2500) {
       stopReason = 'time_budget';
@@ -264,6 +230,11 @@ export async function scrapePage(page, options = {}) {
       }
     }
     await pause(noScroll ? 1400 : 1800);
+    if (shouldCancel()) {
+      stopReason = 'cancelled';
+      log('Stopped because cancellation was requested after scroll wait', { step, count: seen.size });
+      break;
+    }
 
     snapshot = await page.evaluate(getPageSnapshot);
     const count = mergeLinks(snapshot);
@@ -294,21 +265,20 @@ export async function scrapePage(page, options = {}) {
   });
   if (scrollerElement) await scroller.dispose();
 
-  const status = stopReason === 'resume_anchor_not_found'
-    ? 'stopped_resume_anchor_not_found'
+  const status = stopReason === 'cancelled'
+    ? 'stopped_cancelled'
     : stopReason === 'time_budget'
-      ? 'continue_time_budget'
+      ? 'stopped_time_budget'
       : snapshot.pageState === 'login_popup_blocked'
-    ? 'stopped_login_popup_without_close'
-    : snapshot.pageState === 'checkpoint'
-      ? 'stopped_checkpoint'
-      : snapshot.pageState === 'login_required'
-        ? 'stopped_login_required'
-        : idleSteps >= idleLimit ? 'stopped_idle_limit' : noScroll ? 'stopped_after_no_scroll_experiment' : 'stopped_after_scrolling';
+        ? 'stopped_login_popup_without_close'
+        : snapshot.pageState === 'checkpoint'
+          ? 'stopped_checkpoint'
+          : snapshot.pageState === 'login_required'
+            ? 'stopped_login_required'
+            : idleSteps >= idleLimit ? 'stopped_idle_limit' : noScroll ? 'stopped_after_no_scroll_experiment' : 'stopped_after_scrolling';
 
   return {
     links: Array.from(seen.values()), debugLogs, status,
     pageState: snapshot.pageState, finalUrl: snapshot.finalUrl,
-    resumeAfterId: Array.from(seen.keys()).at(-1) || resumeAfterId || null,
   };
 }
