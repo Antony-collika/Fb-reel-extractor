@@ -17,12 +17,6 @@ async function startServer() {
     let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
     try {
       const profileUrl = typeof req.body?.profileUrl === 'string' ? req.body.profileUrl : '';
-      const knownLinks = Array.isArray(req.body?.knownLinks)
-        ? req.body.knownLinks.filter((link: unknown): link is string => typeof link === 'string' && /facebook\.com\/reel\/\d+/i.test(link)).slice(-5000)
-        : [];
-      const resumeAfterId = typeof req.body?.resumeAfterId === 'string' && /^\d+$/.test(req.body.resumeAfterId)
-        ? req.body.resumeAfterId
-        : null;
       if (!profileUrl.trim()) {
         return res.status(400).json({ error: 'Profile URL is required' });
       }
@@ -70,17 +64,27 @@ async function startServer() {
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no');
       res.flushHeaders();
-      const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+
+      let clientDisconnected = false;
+      res.on('close', () => {
+        if (!res.writableEnded) {
+          clientDisconnected = true;
+          void browser?.close().catch(() => undefined);
+        }
+      });
+      const send = (event: string, data: unknown) => {
+        if (!clientDisconnected && !res.destroyed) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
 
       const evaluationResult = await scrapePage(page, {
-        knownLinks,
-        resumeAfterId,
         noScroll: false,
         deadline: Date.now() + 90000,
+        shouldCancel: () => clientDisconnected,
         onLink: (url: string, meta: unknown) => send('link', { url, meta }),
         onProgress: (progress: unknown) => send('progress', progress),
       });
 
+      if (clientDisconnected) return;
       send('done', {
         success: true,
         profileId,
@@ -91,7 +95,6 @@ async function startServer() {
         status: evaluationResult.status,
         pageState: evaluationResult.pageState,
         finalUrl: evaluationResult.finalUrl,
-        resumeAfterId: evaluationResult.resumeAfterId,
       });
     } catch (error: any) {
       if (browser) {
@@ -99,8 +102,10 @@ async function startServer() {
       }
       console.error('Puppeteer scrape reels error:', error);
       if (res.headersSent) {
-        res.write(`event: error\ndata: ${JSON.stringify({ error: error.message || 'Failed to scrape Reels list' })}\n\n`);
-        res.end();
+        if (!res.destroyed) {
+          res.write(`event: error\ndata: ${JSON.stringify({ error: error.message || 'Failed to scrape Reels list' })}\n\n`);
+          res.end();
+        }
       } else {
         res.status(500).json({ error: error.message || 'Failed to scrape Reels list' });
       }
