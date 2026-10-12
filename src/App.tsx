@@ -100,9 +100,20 @@ export default function App() {
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
+          if (collected.size && resumeAfterId && transportFailures < 2) {
+            transportFailures += 1;
+            setProgressMsg(`Lượt trước bị ngắt (HTTP ${res.status}); tự động khôi phục từ Reel mốc...`);
+            continue;
+          }
           throw new Error(body?.error || `Không cào được Reels (HTTP ${res.status})`);
         }
-        if (!res.body) throw new Error('Trình duyệt không hỗ trợ nhận tiến độ trực tiếp từ máy chủ.');
+        if (!res.body) {
+          if (collected.size && resumeAfterId && transportFailures < 2) {
+            transportFailures += 1;
+            continue;
+          }
+          throw new Error('Trình duyệt không hỗ trợ nhận tiến độ trực tiếp từ máy chủ.');
+        }
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
@@ -151,8 +162,14 @@ export default function App() {
           reader.releaseLock();
         }
 
-        if (streamError) throw streamError;
-        if (!doneData) throw new Error('Lượt cào kết thúc bất ngờ; sẽ thử tiếp từ checkpoint gần nhất.');
+        if (streamError || !doneData) {
+          if (collected.size && resumeAfterId && transportFailures < 2) {
+            transportFailures += 1;
+            setProgressMsg('Kết nối lượt cào bị ngắt; tự động mở lượt mới từ Reel mốc gần nhất...');
+            continue;
+          }
+          throw streamError || new Error('Lượt cào kết thúc bất ngờ; không có checkpoint để tiếp tục.');
+        }
         finalData = doneData;
         for (const link of doneData.links || []) addLink(link);
         if (Array.isArray(doneData.debugLogs)) setDebugLogs((prev) => [...prev, ...doneData.debugLogs]);
