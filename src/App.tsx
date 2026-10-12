@@ -31,7 +31,7 @@ export default function App() {
         if (loading) setProgressMsg('Đang đóng popup đăng nhập & định vị scroller...');
       }, 4000);
       t2 = setTimeout(() => {
-        if (loading) setProgressMsg('Đang thực hiện cuộn slider desktop liên tục (65% clientHeight)...');
+        if (loading) setProgressMsg('Đang cuộn trình duyệt liên tục, ưu tiên thanh cuộn và chờ lazy-load...');
       }, 9000);
       t3 = setTimeout(() => {
         if (loading) setProgressMsg('Đang kiểm tra idle-limit & hoàn tất thu thập link...');
@@ -167,141 +167,26 @@ export default function App() {
   };
 
   // Synchronized Audited Bookmarklet Script matching server.ts mechanism exactly
-  const synchronizedBookmarkletCode = `javascript:(async function(){
-  var sourceUrl = location.href;
-  var isLogin = function() { return /\\/login(?:\\/|\\?|$)/i.test(location.pathname); };
-  if (isLogin()) { alert('Vui lòng đăng nhập Facebook trước.'); return; }
-
-  var closePopup = function() {
-    var visible = function(el) {
-      var r = el.getBoundingClientRect();
-      var s = window.getComputedStyle(el);
-      return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden';
-    };
-    var dialogs = Array.prototype.slice.call(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))
-      .filter(visible);
-    var roots = dialogs.length ? dialogs : [document];
-    var closeBtn = null;
-    for (var i = 0; i < roots.length; i++) {
-      var btns = roots[i].querySelectorAll('[aria-label="Close"], [aria-label="close"]');
-      for (var j = 0; j < btns.length; j++) {
-        if (visible(btns[j]) && /^(close|đóng|dismiss)$/i.test(btns[j].getAttribute('aria-label') || '')) {
-          closeBtn = btns[j];
-          break;
-        }
-      }
-      if (closeBtn) break;
-    }
-    if (closeBtn) {
-      closeBtn.click();
-      return true;
-    }
-    return false;
-  };
-
-  closePopup();
-  await new Promise(function(r) { setTimeout(r, 1200); });
-  closePopup();
-
-  var scroller = document.querySelector('#scrollview');
-  if (!scroller) {
-    var all = document.querySelectorAll('*');
-    for (var k = 0; k < all.length; k++) {
-      var s = window.getComputedStyle(all[k]);
-      if (/(auto|scroll)/.test(s.overflowY) && all[k].scrollHeight > all[k].clientHeight + 150) {
-        scroller = all[k];
-        break;
-      }
-    }
+  const synchronizedBookmarkletCode = `javascript:(async()=>{
+  const pause=ms=>new Promise(r=>setTimeout(r,ms));
+  const visible=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>0&&r.height>0&&s.display!=="none"&&s.visibility!=="hidden"};
+  const popup=()=>[...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')].find(d=>visible(d)&&/see more on facebook|log in to facebook|email address or phone number/i.test(d.innerText||""));
+  const close=()=>{const d=popup();if(!d)return false;const b=[...d.querySelectorAll('[aria-label],button,[role="button"]')].find(x=>visible(x)&&/^(close|đóng|dismiss)$/i.test(x.getAttribute('aria-label')||""));if(b){b.click();return true}return false};
+  const out=new Map();
+  const scan=()=>{for(const a of document.querySelectorAll('a[href]')){try{const u=new URL(a.href,location.href),m=u.pathname.match(/^\/reel\/(\d+)/i);if(m&&/(^|\.)facebook\.com$/i.test(u.hostname))out.set(m[1],\`https://www.facebook.com/reel/\${m[1]}/\`)}catch{}}};
+  const find=()=>[...document.querySelectorAll('#scrollview,main,[role="main"],div,section')].filter(e=>{const s=getComputedStyle(e);return/(auto|scroll)/i.test(s.overflowY)&&e.scrollHeight>e.clientHeight+150&&e.querySelector('a[href*="/reel/"]')}).sort((a,b)=>b.scrollHeight-a.scrollHeight)[0]||null;
+  let scroller=find(),idle=0,prev=0,height=0;scan();
+  for(let step=0;step<180&&idle<8;step++){
+    close();await pause(150);
+    const p=scroller||document.documentElement,before=scroller?scroller.scrollTop:scrollY,client=scroller?scroller.clientHeight:innerHeight,total=scroller?scroller.scrollHeight:Math.max(document.documentElement.scrollHeight,document.body.scrollHeight),amount=Math.max(300,Math.floor(client*.72));
+    if(scroller){scroller.scrollTop=Math.min(before+amount,total);scroller.dispatchEvent(new WheelEvent('wheel',{deltaY:amount,bubbles:true}));scroller.dispatchEvent(new Event('scroll',{bubbles:true}))}else{scrollBy({top:amount,behavior:'smooth'});dispatchEvent(new WheelEvent('wheel',{deltaY:amount,bubbles:true}))}
+    await pause(1800);scan();const now=out.size,nextHeight=scroller?scroller.scrollHeight:Math.max(document.documentElement.scrollHeight,document.body.scrollHeight);idle=now>prev||nextHeight!==height?0:idle+1;prev=now;height=nextHeight;
+    const blocked=popup();if(blocked&&!close())break;
+    if((scroller?scroller.scrollTop:scrollY)+client>=total-80&&idle>=3)break;
   }
-  if (!scroller || scroller === document.body || scroller === document.documentElement) {
-    scroller = window;
-  }
-
-  var seen = new Map();
-  var scan = function() {
-    var anchors = document.querySelectorAll('a[href]');
-    for (var a = 0; a < anchors.length; a++) {
-      try {
-        var href = anchors[a].getAttribute('href') || '';
-        var m = href.match(/\\/reel\\/(\\d+)/i);
-        if (m) {
-          seen.set(m[1], 'https://www.facebook.com/reel/' + m[1] + '/');
-        }
-      } catch (e) {}
-    }
-  };
-
-  scan();
-  alert('Bắt đầu cào Reels chuẩn Audited...');
-
-  var maxSteps = 150;
-  var idleLimit = 12;
-  var idle = 0;
-  var prevCount = seen.size;
-  var prevHeight = scroller === window ? document.body.scrollHeight : scroller.scrollHeight;
-
-  for (var step = 1; step <= maxSteps && idle < idleLimit; step++) {
-    if (isLogin()) {
-      location.href = sourceUrl;
-      await new Promise(function(r) { setTimeout(r, 3500); });
-      continue;
-    }
-
-    closePopup();
-
-    var clientH = scroller === window ? window.innerHeight : scroller.clientHeight;
-    var scrollH = scroller === window ? document.body.scrollHeight : scroller.scrollHeight;
-    var scrollT = scroller === window ? window.scrollY : scroller.scrollTop;
-    var amount = Math.max(300, Math.floor(clientH * 0.65));
-
-    if (scroller === window) {
-      window.scrollBy({ top: amount, behavior: 'smooth' });
-      window.dispatchEvent(new WheelEvent('wheel', { deltaY: amount }));
-    } else {
-      scroller.scrollTop = Math.min(scrollT + amount, scrollH);
-      scroller.dispatchEvent(new Event('scroll', { bubbles: true }));
-    }
-
-    await new Promise(function(r) { setTimeout(r, 2500); });
-    scan();
-
-    var currCount = seen.size;
-    var currHeight = scroller === window ? document.body.scrollHeight : scroller.scrollHeight;
-    var newLinksAdded = currCount - prevCount;
-    var heightChanged = currHeight !== prevHeight;
-
-    if (newLinksAdded > 0 || heightChanged) {
-      idle = 0;
-    } else {
-      idle++;
-    }
-
-    prevCount = currCount;
-    prevHeight = currHeight;
-
-    if (scrollT + clientH >= scrollH - 50 && idle >= 4) {
-      break;
-    }
-  }
-
-  var urls = [];
-  seen.forEach(function(url) {
-    urls.push(url);
-  });
-
-  if (urls.length === 0) {
-    alert('Không tìm thấy link reel nào!');
-    return;
-  }
-
-  var blob = new Blob([urls.join('\\n')], { type: 'text/plain;charset=utf-8' });
-  var a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'facebook_reels_' + Date.now() + '.txt';
-  a.click();
-  alert('Đã trích xuất xong ' + urls.length + ' Reels và tải xuống file TXT!');
+  const urls=[...out.values()];if(urls.length)copy(urls.join('\n'));else console.warn('Không tìm thấy link reel');
 })();`;
+
 
   const handleCopyScript = () => {
     navigator.clipboard.writeText(synchronizedBookmarkletCode);
@@ -323,12 +208,12 @@ export default function App() {
                 FB Reels Synchronized Scraper
               </span>
               <span className="text-xs text-slate-400 ml-2 hidden sm:inline-block">
-                Script UI khớp 100% với cơ chế server hiện tại
+                Logic browser liên tục với popup-aware scrolling
               </span>
             </div>
           </div>
           <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-semibold rounded-full border border-emerald-500/20 flex items-center gap-1.5">
-            <ShieldCheck className="w-3.5 h-3.5" /> 100% Synchronized Protocol
+            <ShieldCheck className="w-3.5 h-3.5" /> Continuous Browser Protocol
           </span>
         </div>
       </header>
@@ -517,7 +402,7 @@ export default function App() {
             </button>
           </div>
           <p className="text-xs text-slate-400">
-            Đoạn script dưới đây được cập nhật khớp 100% với cơ chế xử lý đang chạy trên server (kiểm tra visibility popup, phát hiện scroller `#scrollview` hoặc overflow-y container, cuộn 65% clientHeight, vòng lặp dừng thông minh idle-limit 12 bước và xuất file TXT).
+            Đoạn script dưới đây dùng cùng nguyên tắc với trình duyệt: đóng popup khi còn nút Close, cuộn liên tục, quét DOM sau mỗi lần chờ lazy-load và dừng khi Facebook chặn hoặc không còn link mới.
           </p>
           <pre className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-[11px] font-mono text-emerald-400 overflow-x-auto max-h-48">
             {synchronizedBookmarkletCode}
@@ -527,7 +412,7 @@ export default function App() {
       </main>
 
       <footer className="border-t border-slate-800 py-6 text-center text-xs text-slate-500">
-        <p>© 2026 FB Reels Synchronized Scraper. 100% Matching Server Mechanism.</p>
+        <p>© 2026 FB Reels Synchronized Scraper. Continuous Browser Protocol.</p>
       </footer>
     </div>
   );
