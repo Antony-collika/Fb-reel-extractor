@@ -118,7 +118,15 @@ export default function App() {
         reader.releaseLock();
       }
 
-      if (cancelRequestedRef.current) return;
+      if (cancelRequestedRef.current) {
+        setReportMetadata({
+          source: profileUrl, collected_at: new Date().toISOString(), count: collected.size,
+          status: 'cancelled',
+          note: 'Đã hủy theo yêu cầu; giữ lại ' + collected.size + ' link đã thu thập. Có thể bắt đầu quét kênh khác.',
+        });
+        setProgressMsg('Đã hủy tiến trình. Các link đã tìm thấy vẫn được giữ lại.');
+        return;
+      }
       if (streamError) throw streamError;
       if (!doneData) throw new Error('Lượt cào kết thúc bất ngờ; kết quả đã thu thập vẫn được giữ trên giao diện.');
       for (const link of doneData.links || []) addLink(link);
