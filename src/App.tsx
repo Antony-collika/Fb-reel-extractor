@@ -62,7 +62,7 @@ export default function App() {
     const collected = new Map<string, ReelItem>();
     if (savedProgress) {
       for (const link of savedProgress.links) {
-        const match = String(link).match(/\\/reel\\/(\\d+)/i);
+        const match = String(link).match(/\/reel\/(\d+)/i);
         if (match) collected.set(match[1], { id: match[1], url: `https://www.facebook.com/reel/${match[1]}/` });
       }
     }
