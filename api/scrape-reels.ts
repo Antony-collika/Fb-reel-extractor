@@ -5,7 +5,7 @@ import { buildReelsTabUrl } from '../reels-url.ts';
 
 type ApiRequest = {
   method?: string;
-  body?: { profileUrl?: unknown; knownLinks?: unknown; resumeAfterId?: unknown };
+  body?: { profileUrl?: unknown };
 };
 
 type ApiResponse = {
@@ -15,6 +15,9 @@ type ApiResponse = {
   flushHeaders?: () => void;
   write?: (chunk: string) => boolean;
   end?: () => void;
+  on?: (event: string, listener: (...args: any[]) => void) => void;
+  writableEnded?: boolean;
+  destroyed?: boolean;
 };
 
 export default async function handler(req: ApiRequest, res: ApiResponse) {
@@ -34,14 +37,6 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     return res.status(400).json({ error: message });
   }
 
-  const rawKnownLinks = req.body?.knownLinks;
-  const knownLinks = Array.isArray(rawKnownLinks)
-    ? rawKnownLinks.filter((link): link is string => typeof link === 'string' && /facebook\.com\/reel\/\d+/i.test(link)).slice(-5000)
-    : [];
-  const resumeAfterId = typeof req.body?.resumeAfterId === 'string' && /^\d+$/.test(req.body.resumeAfterId)
-    ? req.body.resumeAfterId
-    : null;
-
   // Stream newly discovered links immediately; the browser UI can render them
   // before this bounded Vercel invocation finishes.
   res.setHeader?.('Content-Type', 'text/event-stream; charset=utf-8');
@@ -49,11 +44,19 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   res.setHeader?.('Connection', 'keep-alive');
   res.setHeader?.('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
-  const send = (event: string, data: unknown) => {
-    if (res.write) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  };
-
+  let clientDisconnected = false;
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
+  res.on?.('close', () => {
+    if (!res.writableEnded) {
+      clientDisconnected = true;
+      void browser?.close().catch(() => undefined);
+    }
+  });
+  const send = (event: string, data: unknown) => {
+    if (!clientDisconnected && !res.destroyed && res.write) {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    }
+  };
   try {
     browser = await puppeteer.launch({
       args: chromium.args,
@@ -77,14 +80,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     await new Promise((resolve) => setTimeout(resolve, 1000));
 
     const result = await scrapePage(page, {
-      knownLinks,
-      resumeAfterId,
       noScroll: false,
       deadline: Date.now() + 90000,
+      shouldCancel: () => clientDisconnected,
       onLink: (url: string, meta: unknown) => send('link', { url, meta }),
       onProgress: (progress: unknown) => send('progress', progress),
     });
 
+    if (clientDisconnected) return;
     send('done', {
       success: true,
       profileId: target.profileId,
@@ -95,7 +98,6 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       status: result.status,
       pageState: result.pageState,
       finalUrl: result.finalUrl,
-      resumeAfterId: result.resumeAfterId,
     });
   } catch (error) {
     console.error('[scrape-reels] Error:', error);
