@@ -23,27 +23,6 @@ export default function App() {
 
   const [progressMsg, setProgressMsg] = useState('Đang khởi tạo trình duyệt giả lập...');
 
-  useEffect(() => {
-    let t1: any, t2: any, t3: any;
-    if (loading) {
-      setProgressMsg('Mở URL tab Reels & chờ khởi tạo nội dung...');
-      t1 = setTimeout(() => {
-        if (loading) setProgressMsg('Đang đóng popup đăng nhập & định vị scroller...');
-      }, 4000);
-      t2 = setTimeout(() => {
-        if (loading) setProgressMsg('Đang cuộn trình duyệt liên tục, ưu tiên thanh cuộn và chờ lazy-load...');
-      }, 9000);
-      t3 = setTimeout(() => {
-        if (loading) setProgressMsg('Đang kiểm tra idle-limit & hoàn tất thu thập link...');
-      }, 16000);
-      return () => {
-        clearTimeout(t1);
-        clearTimeout(t2);
-        clearTimeout(t3);
-      };
-    }
-  }, [loading]);
-
   const handleStartScraping = async () => {
     if (!profileUrl.trim()) return;
     setLoading(true);
