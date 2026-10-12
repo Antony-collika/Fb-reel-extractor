@@ -178,7 +178,7 @@ export async function scrapePage(page, options = {}) {
   } = options;
   const seen = new Map();
   for (const url of knownLinks) {
-    const match = String(url).match(/\\/reel\\/(\\d+)/i);
+    const match = String(url).match(/\/reel\/(\d+)/i);
     if (match) seen.set(match[1], `https://www.facebook.com/reel/${match[1]}/`);
   }
   const debugLogs = [];
@@ -217,7 +217,7 @@ export async function scrapePage(page, options = {}) {
     for (let attempt = 0; attempt < 14 && Date.now() < deadline - 3500; attempt++) {
       anchorFound = await page.evaluate((id) => {
         const anchor = Array.from(document.querySelectorAll('a[href]')).find((element) => {
-          try { return new URL(element.href, location.href).pathname.match(/^\\/reel\\/(\\d+)/i)?.[1] === id; }
+          try { return new URL(element.href, location.href).pathname.match(/^\/reel\/(\d+)/i)?.[1] === id; }
           catch { return false; }
         });
         if (anchor) anchor.scrollIntoView({ block: 'center', behavior: 'instant' });
