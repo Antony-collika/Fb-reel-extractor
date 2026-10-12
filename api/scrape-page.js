@@ -158,8 +158,8 @@ export async function scrapePage(page, options = {}) {
     onProgress = () => {},
     shouldCancel = () => false,
     viewportGrowth = true,
-    initialViewportHeight = 10000,
-    viewportStep = 500,
+    initialViewportHeight = 20000,
+    viewportStep = 200,
     maxViewportHeight = 50000,
   } = options;
   const seen = new Map();
