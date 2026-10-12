@@ -3,7 +3,9 @@ name: Tests
 on:
   pull_request:
   push:
-    branches: [main]
+    branches:
+      - main
+      - fix/clean-reels-list-scraping
 
 permissions:
   contents: read
@@ -21,16 +23,16 @@ jobs:
       - run: npm run lint
 
   live-reels-acceptance:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/fix/clean-reels-list-scraping')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - run: npm install
-      - name: Test public Professor-Glitch profile (pass requires >60 Reels)
+      - name: Test public Professor-Glitch Reels tab (pass requires >60 Reels)
         run: npm run test:live
