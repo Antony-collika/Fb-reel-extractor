@@ -57,7 +57,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   try {
     browser = await puppeteer.launch({
       args: chromium.args,
-      defaultViewport: { width: 1280, height: 10000 },
+      defaultViewport: { width: 1280, height: 12000 },
       executablePath: await chromium.executablePath(),
       headless: true,
     });
