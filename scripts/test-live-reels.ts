@@ -1,6 +1,6 @@
 import handler from '../api/scrape-reels.ts';
 
-const profileUrl = 'https://www.facebook.com/people/Professor-Glitch/61580646125999';
+const profileUrl = 'https://www.facebook.com/people/Professor-Glitch/61580646125999/?sk=reels_tab';
 
 type Payload = {
   success?: boolean;
