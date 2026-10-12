@@ -26,14 +26,14 @@ function getPageSnapshot() {
   for (const anchor of document.querySelectorAll('a[href]')) {
     try {
       const href = anchor.getAttribute('href') || '';
-      const match = href.match(/\\/reel\\/(\\d+)/i);
+      const match = href.match(/\/reel\/(\d+)/i);
       if (match) links.set(match[1], 'https://www.facebook.com/reel/' + match[1] + '/');
     } catch { /* Ignore malformed anchors. */ }
   }
 
   return {
     links: Array.from(links.entries()),
-    pageState: /\\/checkpoint\\//i.test(location.pathname) ? 'checkpoint' : /\\/login(?:\\/|$)/i.test(location.pathname) ? 'login_required' : 'loaded',
+    pageState: /\/checkpoint\//i.test(location.pathname) ? 'checkpoint' : /\/login(?:\/|$)/i.test(location.pathname) ? 'login_required' : 'loaded',
     finalUrl: location.href,
     title: document.title,
     bodyText: (document.body?.innerText || '').slice(0, 500),
