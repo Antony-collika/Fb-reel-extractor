@@ -45,7 +45,7 @@ async function startServer() {
           '--disable-dev-shm-usage',
           '--disable-gpu',
           '--disable-notifications',
-          '--window-size=1280,12000',
+          '--window-size=1280,20000',
         ],
       });
       if (clientDisconnected) {
