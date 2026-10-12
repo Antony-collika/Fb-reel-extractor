@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { 
   Globe, Film, Copy, Check, ExternalLink, 
-  Download, Trash2, FileText, Sparkles, RefreshCw, AlertCircle, ShieldCheck, Terminal, Code, CheckCircle2, ListTree
+  Download, Trash2, FileText, Sparkles, RefreshCw, AlertCircle, ShieldCheck, Terminal, Code, CheckCircle2, ListTree, StopCircle
 } from 'lucide-react';
 
 interface ReelItem {
@@ -22,216 +22,135 @@ export default function App() {
   const [showLogs, setShowLogs] = useState(false);
 
   const [progressMsg, setProgressMsg] = useState('Đang khởi tạo trình duyệt giả lập...');
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const cancelRequestedRef = useRef(false);
+
+  const handleCancelScraping = () => {
+    if (!abortControllerRef.current) return;
+    cancelRequestedRef.current = true;
+    setProgressMsg('Đang hủy tiến trình và giữ lại các link đã thu thập...');
+    abortControllerRef.current.abort();
+  };
 
   const handleStartScraping = async () => {
-    if (!profileUrl.trim()) return;
+    if (!profileUrl.trim() || loading) return;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    cancelRequestedRef.current = false;
     setLoading(true);
     setError(null);
+    setReels([]);
+    setReelsTabUrl('');
     setReportMetadata(null);
     setDebugLogs([]);
-    const progressKey = 'fb-reels-resume-v1';
-    let savedProgress: any = null;
-    try {
-      const saved = JSON.parse(localStorage.getItem(progressKey) || 'null');
-      if (saved?.profileUrl === profileUrl && Array.isArray(saved.links) && saved.links.length > 0 &&
-          (!saved.status || saved.status === 'continue_time_budget' || saved.status === 'paused_with_partial_results')) {
-        savedProgress = saved;
-      }
-    } catch { /* Ignore corrupt or unavailable saved progress. */ }
-    const collected = new Map<string, ReelItem>();
-    if (savedProgress) {
-      for (const link of savedProgress.links) {
-        const match = String(link).match(/\/reel\/(\d+)/i);
-        if (match) collected.set(match[1], { id: match[1], url: `https://www.facebook.com/reel/${match[1]}/` });
-      }
-    }
-    setReels(Array.from(collected.values()));
-    let resumeAfterId: string | null = savedProgress?.resumeAfterId || Array.from(collected.keys()).at(-1) || null;
-    let rounds = 0;
-    let transportFailures = 0;
-    let finalData: any = null;
-    if (savedProgress) {
-      setProgressMsg(`Đã khôi phục ${collected.size} link đã lưu; tự động tiếp tục từ checkpoint gần nhất...`);
-    }
+    setProgressMsg('Đang mở Facebook và thu thập Reels; link sẽ hiện ngay khi tìm thấy...');
 
+    const collected = new Map<string, ReelItem>();
+    let doneData: any = null;
+    let streamError: Error | null = null;
     const addLink = (link: string) => {
       const match = link.match(/\/reel\/(\d+)/i);
       if (!match) return;
       const id = match[1];
-      resumeAfterId = id;
-      const isNew = !collected.has(id);
-      if (isNew) {
-        collected.set(id, { id, url: `https://www.facebook.com/reel/${id}/` });
-        const next = Array.from(collected.values());
-        setReels(next);
-        setReportMetadata({
-          source: profileUrl,
-          collected_at: new Date().toISOString(),
-          count: next.length,
-          status: 'collecting',
-          note: 'Đang tự động tiếp tục theo từng lượt; link mới được hiển thị ngay khi phát hiện.',
-        });
+      if (collected.has(id)) return;
+      collected.set(id, { id, url: 'https://www.facebook.com/reel/' + id + '/' });
+      setReels(Array.from(collected.values()));
+      setReportMetadata({
+        source: profileUrl, collected_at: new Date().toISOString(), count: collected.size,
+        status: 'collecting',
+        note: 'Đang thu thập trong một lượt duy nhất; link mới được hiển thị ngay khi phát hiện.',
+      });
+    };
+
+    const handleEvent = (block: string) => {
+      let eventName = 'message';
+      const dataLines: string[] = [];
+      for (const line of block.split(/\r?\n/)) {
+        if (line.startsWith('event:')) eventName = line.slice(6).trim();
+        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
       }
-      if (isNew) {
-        try {
-          localStorage.setItem(progressKey, JSON.stringify({
-            profileUrl, links: Array.from(collected.values()).map((item) => item.url), resumeAfterId,
-            updatedAt: new Date().toISOString(),
-          }));
-        } catch { /* Storage may be unavailable; in-memory progress still works. */ }
+      if (!dataLines.length) return;
+      let payload: any;
+      try { payload = JSON.parse(dataLines.join('\n')); } catch { return; }
+      if (eventName === 'link' && typeof payload.url === 'string') {
+        addLink(payload.url);
+      } else if (eventName === 'progress') {
+        const count = Math.max(collected.size, Number(payload.count) || 0);
+        setProgressMsg('Đã tìm thấy ' + count + ' Reels; đang cuộn và tải nội dung...');
+      } else if (eventName === 'done') {
+        doneData = payload;
+      } else if (eventName === 'error') {
+        streamError = new Error(payload.error || 'Lỗi khi cào dữ liệu.');
       }
     };
 
     try {
-      while (rounds < 30) {
-        rounds += 1;
-        setProgressMsg(rounds === 1
-          ? 'Đang mở Facebook và thu thập Reels; link sẽ hiện ngay khi tìm thấy...'
-          : `Tự động tiếp tục lượt ${rounds}; hiện đã có ${collected.size} Reels...`);
-        const res = await fetch('/api/scrape-reels', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            profileUrl,
-            knownLinks: Array.from(collected.values()).map((item) => item.url),
-            resumeAfterId,
-          }),
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          if (collected.size && resumeAfterId && transportFailures < 2) {
-            transportFailures += 1;
-            setProgressMsg(`Lượt trước bị ngắt (HTTP ${res.status}); tự động khôi phục từ Reel mốc...`);
-            continue;
-          }
-          throw new Error(body?.error || `Không cào được Reels (HTTP ${res.status})`);
-        }
-        if (!res.body) {
-          if (collected.size && resumeAfterId && transportFailures < 2) {
-            transportFailures += 1;
-            continue;
-          }
-          throw new Error('Trình duyệt không hỗ trợ nhận tiến độ trực tiếp từ máy chủ.');
-        }
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        let doneData: any = null;
-        let streamError: Error | null = null;
+      const res = await fetch('/api/scrape-reels', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileUrl }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || 'Không cào được Reels (HTTP ' + res.status + ')');
+      }
+      if (!res.body) throw new Error('Trình duyệt không hỗ trợ nhận tiến độ trực tiếp từ máy chủ.');
 
-        const handleEvent = (block: string) => {
-          let eventName = 'message';
-          const dataLines: string[] = [];
-          for (const line of block.split(/\r?\n/)) {
-            if (line.startsWith('event:')) eventName = line.slice(6).trim();
-            else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      try {
+        while (true) {
+          const result = await reader.read();
+          if (result.done) break;
+          buffer += decoder.decode(result.value, { stream: true });
+          let boundary = buffer.indexOf('\n\n');
+          while (boundary !== -1) {
+            handleEvent(buffer.slice(0, boundary).replace(/\r$/, ''));
+            buffer = buffer.slice(boundary + 2);
+            boundary = buffer.indexOf('\n\n');
           }
-          if (!dataLines.length) return;
-          let payload: any;
-          try { payload = JSON.parse(dataLines.join('\n')); } catch { return; }
-          if (eventName === 'link' && typeof payload.url === 'string') {
-            addLink(payload.url);
-          } else if (eventName === 'progress') {
-            const count = Math.max(collected.size, Number(payload.count) || 0);
-            setProgressMsg(payload.phase === 'resumed'
-              ? `Đã khôi phục vị trí gần Reels ${payload.resumeAfterId}; đang lấy tiếp (${count} link)...`
-              : `Lượt ${rounds}: đã tìm thấy ${count} Reels; đang cuộn và tải nội dung...`);
-          } else if (eventName === 'done') {
-            doneData = payload;
-          } else if (eventName === 'error') {
-            streamError = new Error(payload.error || 'Lỗi khi cào dữ liệu.');
-          }
-        };
-
-        try {
-          while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            let boundary = buffer.indexOf('\n\n');
-            while (boundary !== -1) {
-              handleEvent(buffer.slice(0, boundary).replace(/\r$/, ''));
-              buffer = buffer.slice(boundary + 2);
-              boundary = buffer.indexOf('\n\n');
-            }
-          }
-          buffer += decoder.decode();
-          if (buffer.trim()) handleEvent(buffer);
-        } finally {
-          reader.releaseLock();
         }
-
-        if (streamError || !doneData) {
-          if (collected.size && resumeAfterId && transportFailures < 2) {
-            transportFailures += 1;
-            setProgressMsg('Kết nối lượt cào bị ngắt; tự động mở lượt mới từ Reel mốc gần nhất...');
-            continue;
-          }
-          throw streamError || new Error('Lượt cào kết thúc bất ngờ; không có checkpoint để tiếp tục.');
-        }
-        finalData = doneData;
-        for (const link of doneData.links || []) addLink(link);
-        if (Array.isArray(doneData.debugLogs)) setDebugLogs((prev) => [...prev, ...doneData.debugLogs]);
-        resumeAfterId = doneData.resumeAfterId || resumeAfterId;
-        transportFailures = 0;
-
-        setReels(Array.from(collected.values()));
-        setReelsTabUrl(doneData.reelsTabUrl || '');
-        setReportMetadata({
-          source: doneData.reelsTabUrl || profileUrl,
-          collected_at: new Date().toISOString(),
-          count: collected.size,
-          status: doneData.status || 'completed',
-          note: doneData.status === 'continue_time_budget'
-            ? `Đã lưu ${collected.size} link; tự động tiếp tục lượt kế tiếp trước giới hạn thời gian Vercel.`
-            : `Trạng thái lượt quét: ${doneData.status || 'completed'}.`,
-        });
-
-        if (doneData.status === 'continue_time_budget' && doneData.pageState === 'loaded' && resumeAfterId) {
-          try {
-            localStorage.setItem(progressKey, JSON.stringify({
-              profileUrl, links: Array.from(collected.values()).map((item) => item.url), resumeAfterId,
-              updatedAt: new Date().toISOString(),
-            }));
-          } catch { /* Ignore unavailable storage. */ }
-          continue;
-        }
-        if (doneData.status === 'stopped_resume_anchor_not_found') {
-          throw new Error('Không tìm lại được Reel mốc để tiếp tục. Các link đã thu thập vẫn được giữ trên giao diện; hãy thử lại để quét từ đầu.');
-        }
-        break;
+        buffer += decoder.decode();
+        if (buffer.trim()) handleEvent(buffer);
+      } finally {
+        reader.releaseLock();
       }
 
-      const status = finalData?.status || 'stopped_safety_limit';
+      if (cancelRequestedRef.current) return;
+      if (streamError) throw streamError;
+      if (!doneData) throw new Error('Lượt cào kết thúc bất ngờ; kết quả đã thu thập vẫn được giữ trên giao diện.');
+      for (const link of doneData.links || []) addLink(link);
+      if (Array.isArray(doneData.debugLogs)) setDebugLogs(doneData.debugLogs);
+      setReelsTabUrl(doneData.reelsTabUrl || '');
       setReportMetadata({
-        source: finalData?.reelsTabUrl || profileUrl,
+        source: doneData.reelsTabUrl || profileUrl,
         collected_at: new Date().toISOString(),
         count: collected.size,
-        status,
-        note: rounds >= 30
-          ? 'Đã chạm giới hạn an toàn 30 lượt tự động. Các link đã thu thập vẫn còn trên giao diện.'
-          : status === 'stopped_login_popup_without_close' || status === 'stopped_login_required' || status === 'stopped_checkpoint'
-            ? 'Facebook yêu cầu đăng nhập hoặc chặn truy cập; đã giữ lại các link thu thập được.'
-            : `Đã thu thập ${collected.size} link. Trạng thái kết thúc: ${status}.`,
+        status: doneData.status || 'completed',
+        note: 'Đã kết thúc một lượt quét. Trạng thái: ' + (doneData.status || 'completed') + '.',
       });
-      try {
-        localStorage.setItem(progressKey, JSON.stringify({
-          profileUrl, links: Array.from(collected.values()).map((item) => item.url), resumeAfterId,
-          status, updatedAt: new Date().toISOString(),
-        }));
-      } catch { /* Ignore unavailable storage. */ }
     } catch (err: any) {
-      setError(err.message || 'Lỗi khi cào dữ liệu từ trình duyệt giả lập.');
-      // Keep every streamed link visible even when a later invocation fails.
-      setReels(Array.from(collected.values()));
-      if (collected.size) {
+      if (cancelRequestedRef.current || err?.name === 'AbortError') {
+        setError(null);
         setReportMetadata({
           source: profileUrl, collected_at: new Date().toISOString(), count: collected.size,
-          status: 'paused_with_partial_results',
-          note: 'Tiến trình bị gián đoạn; link đã lấy vẫn được giữ trong giao diện và checkpoint cục bộ.',
+          status: 'cancelled',
+          note: 'Đã hủy theo yêu cầu; giữ lại ' + collected.size + ' link đã thu thập. Có thể bắt đầu quét kênh khác.',
+        });
+        setProgressMsg('Đã hủy tiến trình. Các link đã tìm thấy vẫn được giữ lại.');
+      } else {
+        setError(err.message || 'Lỗi khi cào dữ liệu từ trình duyệt giả lập.');
+        setReportMetadata({
+          source: profileUrl, collected_at: new Date().toISOString(), count: collected.size,
+          status: 'interrupted',
+          note: 'Lượt quét bị gián đoạn; giữ lại ' + collected.size + ' link đã thu thập.',
         });
       }
+      setReels(Array.from(collected.values()));
     } finally {
+      if (abortControllerRef.current === controller) abortControllerRef.current = null;
       setLoading(false);
     }
   };
@@ -386,6 +305,16 @@ export default function App() {
               )}
             </button>
           </div>
+
+          {loading && (
+            <button
+              onClick={handleCancelScraping}
+              className="w-full sm:w-auto bg-red-600 hover:bg-red-500 text-white px-5 py-3 rounded-xl font-medium text-sm transition flex items-center justify-center gap-2"
+            >
+              <StopCircle className="w-4 h-4" />
+              <span>Hủy quét và giữ kết quả</span>
+            </button>
+          )}
 
           {reelsTabUrl && !loading && (
             <div className="text-xs text-slate-400 font-mono flex items-center gap-2 pt-1">
