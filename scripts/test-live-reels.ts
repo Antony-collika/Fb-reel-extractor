@@ -17,6 +17,8 @@ const response = {
   statusCode: 200,
   body: undefined as Payload | undefined,
   headers: {} as Record<string, string>,
+  stream: '',
+  headersSent: false,
   status(code: number) {
     this.statusCode = code;
     return this;
@@ -27,6 +29,25 @@ const response = {
   },
   setHeader(name: string, value: string) {
     this.headers[name] = value;
+  },
+  flushHeaders() {
+    this.headersSent = true;
+  },
+  write(chunk: string) {
+    this.headersSent = true;
+    this.stream += chunk;
+    return true;
+  },
+  end() {
+    for (const block of this.stream.split('\\n\\n')) {
+      const event = block.match(/^event:\\s*(.+)$/m)?.[1]?.trim();
+      const data = block.match(/^data:\\s*(.+)$/m)?.[1];
+      if (!data) continue;
+      try {
+        const payload = JSON.parse(data) as Payload;
+        if (event === 'done' || event === 'error') this.body = payload;
+      } catch { /* Ignore incomplete stream frames. */ }
+    }
   },
 };
 
