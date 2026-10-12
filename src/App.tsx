@@ -48,15 +48,32 @@ export default function App() {
     if (!profileUrl.trim()) return;
     setLoading(true);
     setError(null);
-    setReels([]);
     setReportMetadata(null);
     setDebugLogs([]);
+    const progressKey = 'fb-reels-resume-v1';
+    let savedProgress: any = null;
+    try {
+      const saved = JSON.parse(localStorage.getItem(progressKey) || 'null');
+      if (saved?.profileUrl === profileUrl && Array.isArray(saved.links) && saved.links.length > 0 &&
+          (!saved.status || saved.status === 'continue_time_budget' || saved.status === 'paused_with_partial_results')) {
+        savedProgress = saved;
+      }
+    } catch { /* Ignore corrupt or unavailable saved progress. */ }
     const collected = new Map<string, ReelItem>();
-    let resumeAfterId: string | null = null;
+    if (savedProgress) {
+      for (const link of savedProgress.links) {
+        const match = String(link).match(/\\/reel\\/(\\d+)/i);
+        if (match) collected.set(match[1], { id: match[1], url: `https://www.facebook.com/reel/${match[1]}/` });
+      }
+    }
+    setReels(Array.from(collected.values()));
+    let resumeAfterId: string | null = savedProgress?.resumeAfterId || Array.from(collected.keys()).at(-1) || null;
     let rounds = 0;
     let transportFailures = 0;
     let finalData: any = null;
-    const progressKey = 'fb-reels-resume-v1';
+    if (savedProgress) {
+      setProgressMsg(`Đã khôi phục ${collected.size} link đã lưu; tự động tiếp tục từ checkpoint gần nhất...`);
+    }
 
     const addLink = (link: string) => {
       const match = link.match(/\/reel\/(\d+)/i);
