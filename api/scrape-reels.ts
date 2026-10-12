@@ -79,7 +79,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     const result = await scrapePage(page, {
       knownLinks,
       resumeAfterId,
-      noScroll: true,
+      noScroll: false,
       deadline: Date.now() + 30000,
       onLink: (url: string, meta: unknown) => send('link', { url, meta }),
       onProgress: (progress: unknown) => send('progress', progress),
