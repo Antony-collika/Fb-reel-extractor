@@ -158,8 +158,8 @@ export async function scrapePage(page, options = {}) {
     onProgress = () => {},
     shouldCancel = () => false,
     viewportGrowth = true,
-    initialViewportHeight = 20000,
-    viewportStep = 2000,
+    initialViewportHeight = 10000,
+    viewportStep = 500,
     maxViewportHeight = 50000,
   } = options;
   const seen = new Map();
@@ -199,7 +199,7 @@ export async function scrapePage(page, options = {}) {
   let idleSteps = 0;
   let previousCount = seen.size;
   let lastHeight = snapshot.scrollHeight;
-  const maxSteps = noScroll ? 12 : 60;
+  const maxSteps = noScroll ? 12 : 120;
   const idleLimit = noScroll ? 3 : 8;
   let stopReason = 'natural';
 
