@@ -80,7 +80,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       knownLinks,
       resumeAfterId,
       noScroll: false,
-      deadline: Date.now() + 50000,
+      deadline: Date.now() + 55000,
       onLink: (url: string, meta: unknown) => send('link', { url, meta }),
       onProgress: (progress: unknown) => send('progress', progress),
     });
