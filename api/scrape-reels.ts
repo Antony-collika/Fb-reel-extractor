@@ -54,7 +54,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   });
   const send = (event: string, data: unknown) => {
     if (!clientDisconnected && !res.destroyed && res.write) {
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      res.write(`event: ${event}\\ndata: ${JSON.stringify(data)}\\n\\n`);
     }
   };
   try {
@@ -89,7 +89,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       noScroll: false,
       viewportGrowth: true,
       initialViewportHeight: 20000,
-      viewportStep: 2000,
+      viewportStep: 1000,
       maxViewportHeight: 50000,
       deadline: Date.now() + 105000,
       shouldCancel: () => clientDisconnected,
