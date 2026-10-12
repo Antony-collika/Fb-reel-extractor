@@ -60,7 +60,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   try {
     browser = await puppeteer.launch({
       args: chromium.args,
-      defaultViewport: { width: 1280, height: 20000 },
+      defaultViewport: { width: 1280, height: 50000 },
       executablePath: await chromium.executablePath(),
       headless: true,
     });
@@ -88,9 +88,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     const result = await scrapePage(page, {
       noScroll: false,
       viewportGrowth: true,
-      initialViewportHeight: 20000,
-      viewportStep: 200,
-      maxViewportHeight: 50000,
+      initialViewportHeight: 50000,
+      viewportStep: 2000,
+      maxViewportHeight: 100000,
       deadline: Date.now() + 105000,
       shouldCancel: () => clientDisconnected,
       onLink: (url: string, meta: unknown) => send('link', { url, meta }),
