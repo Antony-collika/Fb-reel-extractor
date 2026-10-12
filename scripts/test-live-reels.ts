@@ -39,9 +39,9 @@ const response = {
     return true;
   },
   end() {
-    for (const block of this.stream.split('\\n\\n')) {
-      const event = block.match(/^event:\\s*(.+)$/m)?.[1]?.trim();
-      const data = block.match(/^data:\\s*(.+)$/m)?.[1];
+    for (const block of this.stream.split('\n\n')) {
+      const event = block.match(/^event:\s*(.+)$/m)?.[1]?.trim();
+      const data = block.match(/^data:\s*(.+)$/m)?.[1];
       if (!data) continue;
       try {
         const payload = JSON.parse(data) as Payload;
