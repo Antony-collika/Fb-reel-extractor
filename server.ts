@@ -85,7 +85,7 @@ async function startServer() {
         noScroll: false,
         viewportGrowth: true,
         initialViewportHeight: 20000,
-        viewportStep: 500,
+        viewportStep: 2000,
         maxViewportHeight: 50000,
         deadline: Date.now() + 105000,
         shouldCancel: () => clientDisconnected,
