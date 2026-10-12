@@ -59,7 +59,7 @@ export default function App() {
     const progressKey = 'fb-reels-resume-v1';
 
     const addLink = (link: string) => {
-      const match = link.match(/\\/reel\\/(\\d+)/i);
+      const match = link.match(/\/reel\/(\d+)/i);
       if (!match) return;
       const id = match[1];
       resumeAfterId = id;
@@ -112,13 +112,13 @@ export default function App() {
         const handleEvent = (block: string) => {
           let eventName = 'message';
           const dataLines: string[] = [];
-          for (const line of block.split(/\\r?\\n/)) {
+          for (const line of block.split(/\r?\n/)) {
             if (line.startsWith('event:')) eventName = line.slice(6).trim();
             else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
           }
           if (!dataLines.length) return;
           let payload: any;
-          try { payload = JSON.parse(dataLines.join('\\n')); } catch { return; }
+          try { payload = JSON.parse(dataLines.join('\n')); } catch { return; }
           if (eventName === 'link' && typeof payload.url === 'string') {
             addLink(payload.url);
           } else if (eventName === 'progress') {
@@ -138,11 +138,11 @@ export default function App() {
             const { value, done } = await reader.read();
             if (done) break;
             buffer += decoder.decode(value, { stream: true });
-            let boundary = buffer.indexOf('\\n\\n');
+            let boundary = buffer.indexOf('\n\n');
             while (boundary !== -1) {
-              handleEvent(buffer.slice(0, boundary).replace(/\\r$/, ''));
+              handleEvent(buffer.slice(0, boundary).replace(/\r$/, ''));
               buffer = buffer.slice(boundary + 2);
-              boundary = buffer.indexOf('\\n\\n');
+              boundary = buffer.indexOf('\n\n');
             }
           }
           buffer += decoder.decode();
