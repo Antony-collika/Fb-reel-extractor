@@ -168,13 +168,29 @@ async function dragScrollbar(page, useWindow, scroller, before) {
   return { method: 'page-wheel-fallback', amount };
 }
 
-export async function scrapePage(page) {
+export async function scrapePage(page, options = {}) {
+  const {
+    knownLinks = [],
+    resumeAfterId = null,
+    deadline = Date.now() + 30000,
+    onLink = () => {},
+    onProgress = () => {},
+  } = options;
   const seen = new Map();
+  for (const url of knownLinks) {
+    const match = String(url).match(/\\/reel\\/(\\d+)/i);
+    if (match) seen.set(match[1], `https://www.facebook.com/reel/${match[1]}/`);
+  }
   const debugLogs = [];
   const log = (msg, meta = {}) => debugLogs.push({ time: new Date().toISOString(), msg, meta });
   const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const mergeLinks = (snapshot) => {
-    for (const [id, url] of snapshot.links || []) if (!seen.has(id)) seen.set(id, url);
+    for (const [id, url] of snapshot.links || []) {
+      if (!seen.has(id)) {
+        seen.set(id, url);
+        onLink(url, { id, count: seen.size });
+      }
+    }
     return seen.size;
   };
 
@@ -184,6 +200,7 @@ export async function scrapePage(page) {
     count: seen.size, pageState: snapshot.pageState,
     popup: snapshot.loginPopup, scrollHeight: snapshot.scrollHeight,
   });
+  onProgress({ phase: 'initial_scan', count: seen.size, pageState: snapshot.pageState });
 
   const scroller = await page.evaluateHandle(findScrollableContainer);
   const scrollerElement = scroller.asElement();
@@ -191,10 +208,50 @@ export async function scrapePage(page) {
   let idleSteps = 0;
   let previousCount = seen.size;
   let lastHeight = snapshot.scrollHeight;
-  const maxSteps = 180;
+  const maxSteps = 60;
   const idleLimit = 8;
+  let stopReason = 'natural';
+  
+  if (resumeAfterId) {
+    let anchorFound = false;
+    for (let attempt = 0; attempt < 14 && Date.now() < deadline - 3500; attempt++) {
+      anchorFound = await page.evaluate((id) => {
+        const anchor = Array.from(document.querySelectorAll('a[href]')).find((element) => {
+          try { return new URL(element.href, location.href).pathname.match(/^\\/reel\\/(\\d+)/i)?.[1] === id; }
+          catch { return false; }
+        });
+        if (anchor) anchor.scrollIntoView({ block: 'center', behavior: 'instant' });
+        return Boolean(anchor);
+      }, String(resumeAfterId));
+      if (anchorFound) {
+        await pause(700);
+        snapshot = await page.evaluate(getPageSnapshot);
+        mergeLinks(snapshot);
+        log('Resume anchor restored', { resumeAfterId, attempt: attempt + 1, count: seen.size });
+        onProgress({ phase: 'resumed', count: seen.size, resumeAfterId });
+        break;
+      }
+      await page.mouse.move(640, 700);
+      await page.mouse.wheel({ deltaY: 1100 });
+      await pause(850);
+      snapshot = await page.evaluate(getPageSnapshot);
+      mergeLinks(snapshot);
+      if (snapshot.pageState === 'checkpoint' || snapshot.pageState === 'login_required' ||
+          (snapshot.pageState === 'login_popup_blocked' && !snapshot.loginPopup.closable)) break;
+    }
+    if (!anchorFound) {
+      stopReason = 'resume_anchor_not_found';
+      log('Resume anchor could not be restored', { resumeAfterId, count: seen.size });
+    }
+  }
 
   for (let step = 1; step <= maxSteps && idleSteps < idleLimit; step++) {
+    if (stopReason === 'resume_anchor_not_found') break;
+    if (Date.now() >= deadline - 2500) {
+      stopReason = 'time_budget';
+      log('Stopped before function timeout to preserve partial results', { step, count: seen.size });
+      break;
+    }
     snapshot = await page.evaluate(getPageSnapshot);
     mergeLinks(snapshot);
     if (snapshot.pageState === 'checkpoint' || snapshot.pageState === 'login_required' ||
@@ -230,6 +287,7 @@ export async function scrapePage(page) {
     });
     previousCount = count;
     lastHeight = after.scrollHeight;
+    onProgress({ phase: 'scroll', step, count, added, idleSteps, scrollY: after.top, pageState: snapshot.pageState });
 
     if (snapshot.pageState === 'login_popup_blocked' || snapshot.pageState === 'checkpoint' || snapshot.pageState === 'login_required') break;
     const atBottom = after.top + after.clientHeight >= after.scrollHeight - 80;
@@ -240,7 +298,11 @@ export async function scrapePage(page) {
   mergeLinks(snapshot);
   if (scrollerElement) await scroller.dispose();
 
-  const status = snapshot.pageState === 'login_popup_blocked'
+  const status = stopReason === 'resume_anchor_not_found'
+    ? 'stopped_resume_anchor_not_found'
+    : stopReason === 'time_budget'
+      ? 'continue_time_budget'
+      : snapshot.pageState === 'login_popup_blocked'
     ? 'stopped_login_popup_without_close'
     : snapshot.pageState === 'checkpoint'
       ? 'stopped_checkpoint'
@@ -251,5 +313,6 @@ export async function scrapePage(page) {
   return {
     links: Array.from(seen.values()), debugLogs, status,
     pageState: snapshot.pageState, finalUrl: snapshot.finalUrl,
+    resumeAfterId: Array.from(seen.keys()).at(-1) || resumeAfterId || null,
   };
 }
