@@ -15,6 +15,13 @@ async function startServer() {
 
   app.post('/api/scrape-reels', async (req, res) => {
     let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
+    let clientDisconnected = false;
+    res.on('close', () => {
+      if (!res.writableEnded) {
+        clientDisconnected = true;
+        void browser?.close().catch(() => undefined);
+      }
+    });
     try {
       const profileUrl = typeof req.body?.profileUrl === 'string' ? req.body.profileUrl : '';
       if (!profileUrl.trim()) {
@@ -41,6 +48,10 @@ async function startServer() {
           '--window-size=1280,30000',
         ],
       });
+      if (clientDisconnected) {
+        await browser.close();
+        return;
+      }
 
       const page = await browser.newPage();
       page.setDefaultNavigationTimeout(18000);
@@ -56,8 +67,9 @@ async function startServer() {
       } catch (error) {
         console.warn('[Puppeteer] Navigation did not finish cleanly:', error);
       }
-
+      if (clientDisconnected) return;
       await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (clientDisconnected) return;
 
       res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -65,13 +77,6 @@ async function startServer() {
       res.setHeader('X-Accel-Buffering', 'no');
       res.flushHeaders();
 
-      let clientDisconnected = false;
-      res.on('close', () => {
-        if (!res.writableEnded) {
-          clientDisconnected = true;
-          void browser?.close().catch(() => undefined);
-        }
-      });
       const send = (event: string, data: unknown) => {
         if (!clientDisconnected && !res.destroyed) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
       };
@@ -97,6 +102,7 @@ async function startServer() {
         finalUrl: evaluationResult.finalUrl,
       });
     } catch (error: any) {
+      if (clientDisconnected) return;
       if (browser) {
         try { await browser.close(); } catch { /* browser may already be closed */ }
       }
