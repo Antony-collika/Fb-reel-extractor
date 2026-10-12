@@ -198,7 +198,6 @@ export async function scrapePage(page, options = {}) {
       log('Stopped because cancellation was requested', { step, count: seen.size });
       break;
     }
-    if (stopReason === 'resume_anchor_not_found') break;
     if (Date.now() >= deadline - 2500) {
       stopReason = 'time_budget';
       log('Stopped before function timeout to preserve partial results', { step, count: seen.size });
