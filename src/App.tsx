@@ -17,6 +17,7 @@ export default function App() {
   const [reelsTabUrl, setReelsTabUrl] = useState('');
   const [copied, setCopied] = useState(false);
   const [copiedScript, setCopiedScript] = useState(false);
+  const [copiedLogs, setCopiedLogs] = useState(false);
   const [reportMetadata, setReportMetadata] = useState<any>(null);
   const [debugLogs, setDebugLogs] = useState<any[]>([]);
   const [showLogs, setShowLogs] = useState(false);
@@ -43,6 +44,8 @@ export default function App() {
     setReelsTabUrl('');
     setReportMetadata(null);
     setDebugLogs([]);
+    setShowLogs(false);
+    setCopiedLogs(false);
     setProgressMsg('Đang mở Facebook và thu thập Reels; link sẽ hiện ngay khi tìm thấy...');
 
     const collected = new Map<string, ReelItem>();
@@ -80,6 +83,7 @@ export default function App() {
       } else if (eventName === 'done') {
         doneData = payload;
       } else if (eventName === 'error') {
+        if (Array.isArray(payload.debugLogs)) setDebugLogs(payload.debugLogs);
         streamError = new Error(payload.error || 'Lỗi khi cào dữ liệu.');
       }
     };
@@ -210,6 +214,17 @@ export default function App() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const handleCopyDebugLogs = async () => {
+    if (debugLogs.length === 0) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(debugLogs, null, 2));
+      setCopiedLogs(true);
+      setTimeout(() => setCopiedLogs(false), 2000);
+    } catch {
+      setError('Không thể sao chép Debug Logs. Hãy kiểm tra quyền clipboard của trình duyệt.');
+    }
   };
 
   const handleCopyAll = () => {
@@ -401,12 +416,22 @@ export default function App() {
             <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs font-mono text-slate-300 space-y-1">
               <div className="flex items-center justify-between">
                 <span><strong className="text-blue-400">Nguồn:</strong> {reportMetadata.source}</span>
-                <button
-                  onClick={() => setShowLogs(!showLogs)}
-                  className="text-amber-400 hover:underline flex items-center gap-1"
-                >
-                  <ListTree className="w-3.5 h-3.5" /> {showLogs ? 'Ẩn Debug Logs' : `Xem Debug Logs (${debugLogs.length})`}
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setShowLogs(!showLogs)}
+                    disabled={debugLogs.length === 0}
+                    className="text-amber-400 hover:underline disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+                  >
+                    <ListTree className="w-3.5 h-3.5" /> {showLogs ? 'Ẩn Debug Logs' : `Xem Debug Logs (${debugLogs.length})`}
+                  </button>
+                  <button
+                    onClick={handleCopyDebugLogs}
+                    disabled={debugLogs.length === 0}
+                    className="text-blue-400 hover:underline disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+                  >
+                    <Copy className="w-3.5 h-3.5" /> {copiedLogs ? 'Đã copy log' : 'Copy Debug Logs'}
+                  </button>
+                </div>
               </div>
               <div><strong className="text-blue-400">Thời điểm:</strong> {reportMetadata.collected_at}</div>
               <div><strong className="text-blue-400">Trạng thái:</strong> <span className="text-emerald-400">{reportMetadata.status}</span></div>
