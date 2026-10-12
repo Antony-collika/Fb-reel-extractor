@@ -44,14 +44,14 @@ async function startServer() {
           '--disable-dev-shm-usage',
           '--disable-gpu',
           '--disable-notifications',
-          '--window-size=1280,1024',
+          '--window-size=1280,10000',
         ],
       });
 
       const page = await browser.newPage();
       page.setDefaultNavigationTimeout(18000);
       page.setDefaultTimeout(8000);
-      await page.setViewport({ width: 1280, height: 1024 });
+      await page.setViewport({ width: 1280, height: 10000 });
       await page.setUserAgent(
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
       );
@@ -75,6 +75,7 @@ async function startServer() {
       const evaluationResult = await scrapePage(page, {
         knownLinks,
         resumeAfterId,
+        noScroll: true,
         deadline: Date.now() + 30000,
         onLink: (url: string, meta: unknown) => send('link', { url, meta }),
         onProgress: (progress: unknown) => send('progress', progress),
