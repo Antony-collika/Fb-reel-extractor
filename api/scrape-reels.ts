@@ -64,6 +64,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
       executablePath: await chromium.executablePath(),
       headless: true,
     });
+    if (clientDisconnected) {
+      await browser.close();
+      return;
+    }
 
     const page = await browser.newPage();
     page.setDefaultNavigationTimeout(18000);
@@ -77,7 +81,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     } catch (error) {
       console.warn('[scrape-reels] Navigation warning:', error instanceof Error ? error.message : error);
     }
+    if (clientDisconnected) return;
     await new Promise((resolve) => setTimeout(resolve, 1000));
+    if (clientDisconnected) return;
 
     const result = await scrapePage(page, {
       noScroll: false,
