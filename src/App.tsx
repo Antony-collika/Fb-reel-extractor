@@ -63,7 +63,8 @@ export default function App() {
       if (!match) return;
       const id = match[1];
       resumeAfterId = id;
-      if (!collected.has(id)) {
+      const isNew = !collected.has(id);
+      if (isNew) {
         collected.set(id, { id, url: `https://www.facebook.com/reel/${id}/` });
         const next = Array.from(collected.values());
         setReels(next);
@@ -75,12 +76,14 @@ export default function App() {
           note: 'Đang tự động tiếp tục theo từng lượt; link mới được hiển thị ngay khi phát hiện.',
         });
       }
-      try {
-        localStorage.setItem(progressKey, JSON.stringify({
-          profileUrl, links: Array.from(collected.values()).map((item) => item.url), resumeAfterId,
-          updatedAt: new Date().toISOString(),
-        }));
-      } catch { /* Storage may be unavailable; in-memory progress still works. */ }
+      if (isNew) {
+        try {
+          localStorage.setItem(progressKey, JSON.stringify({
+            profileUrl, links: Array.from(collected.values()).map((item) => item.url), resumeAfterId,
+            updatedAt: new Date().toISOString(),
+          }));
+        } catch { /* Storage may be unavailable; in-memory progress still works. */ }
+      }
     };
 
     try {
@@ -422,7 +425,7 @@ export default function App() {
                 <Film className="w-5 h-5 text-blue-400" />
                 Kết Quả Thực Tế ({reels.length} Reels)
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">Số lượng reel thu thập chính xác 100% từ tiến trình tự động</p>
+              <p className="text-xs text-slate-400 mt-0.5">Link mới sẽ hiện ngay khi tìm thấy; hệ thống tự tiếp tục qua nhiều lượt nếu gần hết thời gian chạy.</p>
             </div>
             
             <div className="flex items-center gap-2 flex-wrap">
