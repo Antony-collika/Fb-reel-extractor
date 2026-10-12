@@ -160,7 +160,7 @@ export async function scrapePage(page, options = {}) {
     viewportGrowth = true,
     initialViewportHeight = 12000,
     viewportStep = 2000,
-    maxViewportHeight = 30000,
+    maxViewportHeight = 50000,
   } = options;
   const seen = new Map();
   const debugLogs = [];
@@ -280,8 +280,12 @@ export async function scrapePage(page, options = {}) {
     if (/target closed|session closed|browser has disconnected|connection closed/i.test(message)) {
       stopReason = 'target_closed';
       log('Browser target closed during scan; preserving partial results', { count: seen.size, error: message });
+    } else if (/detached frame/i.test(message)) {
+      stopReason = 'detached_frame';
+      log('Frame detached during scan; preserving partial results', { count: seen.size, error: message });
     } else {
-      throw error;
+      stopReason = 'scrape_error';
+      log('Unexpected scan error; preserving partial results', { count: seen.size, error: message });
     }
   }
 
@@ -293,8 +297,12 @@ export async function scrapePage(page, options = {}) {
     if (/target closed|session closed|browser has disconnected|connection closed/i.test(message)) {
       stopReason = 'target_closed';
       log('Final snapshot skipped because browser target is closed', { count: seen.size, error: message });
+    } else if (/detached frame/i.test(message)) {
+      stopReason = 'detached_frame';
+      log('Final snapshot skipped because frame is detached', { count: seen.size, error: message });
     } else {
-      throw error;
+      stopReason = 'scrape_error';
+      log('Final snapshot failed; preserving partial results', { count: seen.size, error: message });
     }
   }
   log('Final page snapshot', {
@@ -306,7 +314,11 @@ export async function scrapePage(page, options = {}) {
 
   const status = stopReason === 'target_closed'
     ? 'stopped_target_closed'
-    : stopReason === 'cancelled'
+    : stopReason === 'detached_frame'
+      ? 'stopped_detached_frame'
+      : stopReason === 'scrape_error'
+        ? 'stopped_scrape_error'
+        : stopReason === 'cancelled'
       ? 'stopped_cancelled'
       : stopReason === 'time_budget'
         ? 'stopped_time_budget'
