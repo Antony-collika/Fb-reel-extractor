@@ -194,7 +194,7 @@ export async function scrapePage(page, options = {}) {
   let previousCount = seen.size;
   let lastHeight = snapshot.scrollHeight;
   const maxSteps = noScroll ? 12 : 60;
-  const idleLimit = noScroll ? 4 : 8;
+  const idleLimit = noScroll ? 3 : 8;
   let stopReason = 'natural';
 
   // Experiment B intentionally avoids all scrolling and resume-anchor restoration.
@@ -270,7 +270,7 @@ export async function scrapePage(page, options = {}) {
     const after = await page.evaluate(getMetrics, useWindow, scrollerElement);
     const added = count - previousCount;
     const heightChanged = after.scrollHeight !== lastHeight;
-    idleSteps = added > 0 || heightChanged ? 0 : idleSteps + 1;
+    idleSteps = added > 0 ? 0 : idleSteps + 1;
     log(noScroll ? 'No-scroll viewport scan' : 'Continuous browser scroll scan', {
       step, count, added, heightChanged, idleSteps, scrollAction,
       before, after, pageState: snapshot.pageState, popup: snapshot.loginPopup,
