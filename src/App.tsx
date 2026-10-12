@@ -134,7 +134,12 @@ export default function App() {
       if (streamError) throw streamError;
       if (!doneData) throw new Error('Lượt cào kết thúc bất ngờ; kết quả đã thu thập vẫn được giữ trên giao diện.');
       for (const link of doneData.links || []) addLink(link);
-      if (Array.isArray(doneData.debugLogs)) setDebugLogs(doneData.debugLogs);
+      if (Array.isArray(doneData.debugLogs)) {
+        setDebugLogs(doneData.debugLogs);
+        if (doneData.debugLogs.length > 0 && /stopped_(detached_frame|scrape_error|target_closed|time_budget)/.test(doneData.status || '')) {
+          setShowLogs(true);
+        }
+      }
       setReelsTabUrl(doneData.reelsTabUrl || '');
       setReportMetadata({
         source: doneData.reelsTabUrl || profileUrl,
