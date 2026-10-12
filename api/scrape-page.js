@@ -159,7 +159,7 @@ export async function scrapePage(page, options = {}) {
     shouldCancel = () => false,
     viewportGrowth = true,
     initialViewportHeight = 20000,
-    viewportStep = 2000,
+    viewportStep = 1000,
     maxViewportHeight = 50000,
   } = options;
   const seen = new Map();
@@ -249,7 +249,7 @@ export async function scrapePage(page, options = {}) {
         }
       }
     }
-    await pause(noScroll ? 1400 : viewportGrowth ? 1200 : 1800);
+    await pause(noScroll ? 1400 : viewportGrowth ? 600 : 1800);
     if (shouldCancel()) {
       stopReason = 'cancelled';
       log('Stopped because cancellation was requested after scroll wait', { step, count: seen.size });
