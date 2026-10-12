@@ -84,10 +84,10 @@ async function startServer() {
       const evaluationResult = await scrapePage(page, {
         noScroll: false,
         viewportGrowth: true,
-        initialViewportHeight: 12000,
+        initialViewportHeight: 20000,
         viewportStep: 2000,
-        maxViewportHeight: 30000,
-        deadline: Date.now() + 90000,
+        maxViewportHeight: 50000,
+        deadline: Date.now() + 105000,
         shouldCancel: () => clientDisconnected,
         onLink: (url: string, meta: unknown) => send('link', { url, meta }),
         onProgress: (progress: unknown) => send('progress', progress),
