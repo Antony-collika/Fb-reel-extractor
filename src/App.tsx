@@ -18,42 +18,84 @@ export default function App() {
   const [copied, setCopied] = useState(false);
   const [copiedScript, setCopiedScript] = useState(false);
   const [reportMetadata, setReportMetadata] = useState<any>(null);
+  const [progressMsg, setProgressMsg] = useState('Đang khởi tạo lượt cào...');
 
   const handleStartScraping = async () => {
-    if (!profileUrl.trim()) return;
+    if (!profileUrl.trim() || loading) return;
     setLoading(true);
     setError(null);
     setReels([]);
     setReportMetadata(null);
+    setReelsTabUrl('');
+    setProgressMsg('Đang gửi yêu cầu đến GitHub Actions...');
+
+    const messages = [
+      'Đang chờ GitHub Actions khởi động trình duyệt...',
+      'Đang mở Facebook và tải danh sách Reels...',
+      'Đang cuộn trang và thu thập liên kết...',
+      'Đang gửi kết quả hoàn chỉnh về website...',
+    ];
+    let messageIndex = 0;
+    const progressTimer = window.setInterval(() => {
+      messageIndex = (messageIndex + 1) % messages.length;
+      setProgressMsg(messages[messageIndex]);
+    }, 5000);
 
     try {
-      const res = await fetch('/api/scrape-reels', {
+      const startResponse = await fetch('/api/scrape-reels', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ profileUrl }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to scrape reels');
+      const startData = await startResponse.json().catch(() => ({}));
+      if (!startResponse.ok || !startData.jobId) {
+        throw new Error(startData?.error || 'Không thể khởi chạy lượt cào.');
+      }
 
-      setReelsTabUrl(data.reelsTabUrl || '');
-      const formattedReels: ReelItem[] = (data.links || []).map((link: string) => {
-        const m = link.match(/\/reel\/(\d+)/i);
-        return {
-          id: m ? m[1] : Math.random().toString(),
-          url: link,
-        };
-      });
-      setReels(formattedReels);
+      const deadline = Date.now() + 6 * 60 * 1000;
+      let result: any = null;
+      while (Date.now() < deadline) {
+        await new Promise(resolve => window.setTimeout(resolve, 5000));
+        const statusResponse = await fetch('/api/scrape-status?jobId=' + encodeURIComponent(startData.jobId), { cache: 'no-store' });
+        const statusData = await statusResponse.json().catch(() => ({}));
+        if (!statusResponse.ok) throw new Error(statusData?.error || 'Không đọc được trạng thái lượt cào.');
+        if (statusData.status === 'failed') throw new Error(statusData.error || 'GitHub Actions không hoàn tất lượt cào.');
+        if (statusData.status === 'completed') {
+          result = statusData.result;
+          break;
+        }
+      }
+      if (!result) throw new Error('Đã chờ quá lâu mà chưa nhận được kết quả. Bạn có thể thử lại.');
+
+      const links: string[] = Array.isArray(result.links) ? result.links : [];
+      const unique = new Map<string, ReelItem>();
+      for (const link of links) {
+        const match = String(link).match(/\/reel\/(\d+)/i);
+        if (match && !unique.has(match[1])) {
+          unique.set(match[1], { id: match[1], url: 'https://www.facebook.com/reel/' + match[1] + '/' });
+        }
+      }
+      const finalReels = Array.from(unique.values());
+      setReels(finalReels);
+      setReelsTabUrl(result.reelsTabUrl || '');
       setReportMetadata({
-        source: data.reelsTabUrl,
+        source: result.reelsTabUrl || profileUrl,
         collected_at: new Date().toISOString(),
-        count: formattedReels.length,
-        status: 'completed_fully',
-        note: 'Đã hoàn tất quy trình cuộn lazy-load và quét DOM chuẩn xác.',
+        count: finalReels.length,
+        status: result.status || 'completed',
+        note: 'Đã nhận kết quả hoàn chỉnh từ GitHub Actions.',
       });
     } catch (err: any) {
-      setError(err.message || 'Lỗi khi cào dữ liệu từ trình duyệt giả lập.');
+      setError(err?.message || 'Lỗi khi cào dữ liệu.');
+      setReportMetadata({
+        source: profileUrl,
+        collected_at: new Date().toISOString(),
+        count: 0,
+        status: 'failed',
+        note: 'Lượt cào không hoàn tất.',
+      });
     } finally {
+      window.clearInterval(progressTimer);
       setLoading(false);
     }
   };
@@ -383,7 +425,7 @@ export default function App() {
           {loading ? (
             <div className="h-72 bg-slate-950 rounded-xl border border-slate-800 flex flex-col items-center justify-center text-slate-400 text-sm p-6 space-y-3">
               <RefreshCw className="w-10 h-10 animate-spin text-blue-500" />
-              <p className="font-medium text-white">Bot đang tuân thủ quy trình audit: tìm scroller, cuộn 65%, kiểm tra visibility popup...</p>
+              <p className="font-medium text-white">{progressMsg}</p>
               <p className="text-xs text-slate-500 max-w-md text-center">Quá trình này đảm bảo không bỏ sót reel nào trong phiên.</p>
             </div>
           ) : reels.length === 0 ? (
