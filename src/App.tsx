@@ -1,7 +1,7 @@
-import React, { useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { 
   Globe, Film, Copy, Check, ExternalLink, 
-  Download, Trash2, FileText, Sparkles, RefreshCw, AlertCircle, ShieldCheck, Terminal, Code, CheckCircle2, ListTree, StopCircle
+  Download, Trash2, FileText, Sparkles, RefreshCw, AlertCircle, ShieldCheck, Terminal, Code, CheckCircle2, ListTree
 } from 'lucide-react';
 
 interface ReelItem {
@@ -23,21 +23,8 @@ export default function App() {
   const [showLogs, setShowLogs] = useState(false);
 
   const [progressMsg, setProgressMsg] = useState('Đang khởi tạo trình duyệt giả lập...');
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const cancelRequestedRef = useRef(false);
-
-  const handleCancelScraping = () => {
-    if (!abortControllerRef.current) return;
-    cancelRequestedRef.current = true;
-    setProgressMsg('Đang hủy tiến trình và giữ lại các link đã thu thập...');
-    abortControllerRef.current.abort();
-  };
-
   const handleStartScraping = async () => {
     if (!profileUrl.trim() || loading) return;
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-    cancelRequestedRef.current = false;
     setLoading(true);
     setError(null);
     setReels([]);
@@ -46,128 +33,82 @@ export default function App() {
     setDebugLogs([]);
     setShowLogs(false);
     setCopiedLogs(false);
-    setProgressMsg('Đang mở Facebook và thu thập Reels; link sẽ hiện ngay khi tìm thấy...');
+    setProgressMsg('Đang gửi yêu cầu đến GitHub Actions...');
 
-    const collected = new Map<string, ReelItem>();
-    let doneData: any = null;
-    let streamError: Error | null = null;
-    const addLink = (link: string) => {
-      const match = link.match(/\/reel\/(\d+)/i);
-      if (!match) return;
-      const id = match[1];
-      if (collected.has(id)) return;
-      collected.set(id, { id, url: 'https://www.facebook.com/reel/' + id + '/' });
-      setReels(Array.from(collected.values()));
-      setReportMetadata({
-        source: profileUrl, collected_at: new Date().toISOString(), count: collected.size,
-        status: 'collecting',
-        note: 'Đang thu thập trong một lượt duy nhất; link mới được hiển thị ngay khi phát hiện.',
-      });
-    };
-
-    const handleEvent = (block: string) => {
-      let eventName = 'message';
-      const dataLines: string[] = [];
-      for (const line of block.split(/\r?\n/)) {
-        if (line.startsWith('event:')) eventName = line.slice(6).trim();
-        else if (line.startsWith('data:')) dataLines.push(line.slice(5).trim());
-      }
-      if (!dataLines.length) return;
-      let payload: any;
-      try { payload = JSON.parse(dataLines.join('\n')); } catch { return; }
-      if (eventName === 'link' && typeof payload.url === 'string') {
-        addLink(payload.url);
-      } else if (eventName === 'progress') {
-        const count = Math.max(collected.size, Number(payload.count) || 0);
-        setProgressMsg('Đã tìm thấy ' + count + ' Reels; đang cuộn và tải nội dung...');
-      } else if (eventName === 'done') {
-        doneData = payload;
-      } else if (eventName === 'error') {
-        if (Array.isArray(payload.debugLogs)) setDebugLogs(payload.debugLogs);
-        streamError = new Error(payload.error || 'Lỗi khi cào dữ liệu.');
-      }
-    };
+    const messages = [
+      'Đang chờ GitHub Actions khởi động trình duyệt...',
+      'Đang mở Facebook và tải danh sách Reels...',
+      'Đang cuộn trang và thu thập liên kết...',
+      'Đang hoàn tất danh sách và gửi kết quả về website...',
+    ];
+    let messageIndex = 0;
+    const progressTimer = window.setInterval(() => {
+      messageIndex = (messageIndex + 1) % messages.length;
+      setProgressMsg(messages[messageIndex]);
+    }, 5000);
 
     try {
-      const res = await fetch('/api/scrape-reels', {
+      const startResponse = await fetch('/api/scrape-reels', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ profileUrl }),
-        signal: controller.signal,
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body?.error || 'Không cào được Reels (HTTP ' + res.status + ')');
-      }
-      if (!res.body) throw new Error('Trình duyệt không hỗ trợ nhận tiến độ trực tiếp từ máy chủ.');
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      try {
-        while (true) {
-          const result = await reader.read();
-          if (result.done) break;
-          buffer += decoder.decode(result.value, { stream: true });
-          let boundary = buffer.indexOf('\n\n');
-          while (boundary !== -1) {
-            handleEvent(buffer.slice(0, boundary).replace(/\r$/, ''));
-            buffer = buffer.slice(boundary + 2);
-            boundary = buffer.indexOf('\n\n');
-          }
-        }
-        buffer += decoder.decode();
-        if (buffer.trim()) handleEvent(buffer);
-      } finally {
-        reader.releaseLock();
+      const startData = await startResponse.json().catch(() => ({}));
+      if (!startResponse.ok || !startData.jobId) {
+        throw new Error(startData?.error || 'Không thể khởi chạy lượt cào.');
       }
 
-      if (cancelRequestedRef.current) {
-        setReportMetadata({
-          source: profileUrl, collected_at: new Date().toISOString(), count: collected.size,
-          status: 'cancelled',
-          note: 'Đã hủy theo yêu cầu; giữ lại ' + collected.size + ' link đã thu thập. Có thể bắt đầu quét kênh khác.',
+      const deadline = Date.now() + 6 * 60 * 1000;
+      let result: any = null;
+      while (Date.now() < deadline) {
+        await new Promise(resolve => window.setTimeout(resolve, 5000));
+        const statusResponse = await fetch('/api/scrape-status?jobId=' + encodeURIComponent(startData.jobId), {
+          cache: 'no-store',
         });
-        setProgressMsg('Đã hủy tiến trình. Các link đã tìm thấy vẫn được giữ lại.');
-        return;
-      }
-      if (streamError) throw streamError;
-      if (!doneData) throw new Error('Lượt cào kết thúc bất ngờ; kết quả đã thu thập vẫn được giữ trên giao diện.');
-      for (const link of doneData.links || []) addLink(link);
-      if (Array.isArray(doneData.debugLogs)) {
-        setDebugLogs(doneData.debugLogs);
-        if (doneData.debugLogs.length > 0 && /stopped_(detached_frame|scrape_error|target_closed|time_budget)/.test(doneData.status || '')) {
-          setShowLogs(true);
+        const statusData = await statusResponse.json().catch(() => ({}));
+        if (!statusResponse.ok) throw new Error(statusData?.error || 'Không đọc được trạng thái lượt cào.');
+        if (statusData.status === 'failed') throw new Error(statusData.error || 'GitHub Actions không hoàn tất lượt cào.');
+        if (statusData.status === 'completed') {
+          result = statusData.result;
+          break;
         }
       }
-      setReelsTabUrl(doneData.reelsTabUrl || '');
+      if (!result) throw new Error('Đã chờ quá lâu mà chưa nhận được kết quả. Bạn có thể thử lại.');
+
+      const links: string[] = Array.isArray(result.links) ? result.links : [];
+      const unique = new Map<string, ReelItem>();
+      for (const link of links) {
+        const match = String(link).match(/\/reel\/(\d+)/i);
+        if (match && !unique.has(match[1])) {
+          unique.set(match[1], { id: match[1], url: 'https://www.facebook.com/reel/' + match[1] + '/' });
+        }
+      }
+      const finalReels = Array.from(unique.values());
+      setReels(finalReels);
+      setDebugLogs(Array.isArray(result.debugLogs) ? result.debugLogs : []);
+      if (Array.isArray(result.debugLogs) && result.debugLogs.length > 0 && /stopped_(detached_frame|scrape_error|target_closed|time_budget)/.test(result.status || '')) {
+        setShowLogs(true);
+      }
+      setReelsTabUrl(result.reelsTabUrl || '');
       setReportMetadata({
-        source: doneData.reelsTabUrl || profileUrl,
+        source: result.reelsTabUrl || profileUrl,
         collected_at: new Date().toISOString(),
-        count: collected.size,
-        status: doneData.status || 'completed',
-        note: 'Đã kết thúc một lượt quét. Trạng thái: ' + (doneData.status || 'completed') + '.',
+        count: finalReels.length,
+        status: result.status || 'completed',
+        note: 'Đã nhận kết quả hoàn chỉnh từ GitHub Actions.',
       });
+      setProgressMsg('Đã nhận được kết quả.');
     } catch (err: any) {
-      if (cancelRequestedRef.current || err?.name === 'AbortError') {
-        setError(null);
-        setReportMetadata({
-          source: profileUrl, collected_at: new Date().toISOString(), count: collected.size,
-          status: 'cancelled',
-          note: 'Đã hủy theo yêu cầu; giữ lại ' + collected.size + ' link đã thu thập. Có thể bắt đầu quét kênh khác.',
-        });
-        setProgressMsg('Đã hủy tiến trình. Các link đã tìm thấy vẫn được giữ lại.');
-      } else {
-        setError(err.message || 'Lỗi khi cào dữ liệu từ trình duyệt giả lập.');
-        setReportMetadata({
-          source: profileUrl, collected_at: new Date().toISOString(), count: collected.size,
-          status: 'interrupted',
-          note: 'Lượt quét bị gián đoạn; giữ lại ' + collected.size + ' link đã thu thập.',
-        });
-      }
-      setReels(Array.from(collected.values()));
+      setError(err?.message || 'Lỗi khi cào dữ liệu.');
+      setReportMetadata({
+        source: profileUrl,
+        collected_at: new Date().toISOString(),
+        count: 0,
+        status: 'failed',
+        note: 'Lượt cào không hoàn tất.',
+      });
     } finally {
-      if (abortControllerRef.current === controller) abortControllerRef.current = null;
+      window.clearInterval(progressTimer);
       setLoading(false);
     }
   };
@@ -303,7 +244,7 @@ export default function App() {
               Tự Động Trích Xuất Reels Ổn Định (POST API)
             </h2>
             <p className="text-slate-400 text-sm">
-              Ứng dụng sử dụng phương thức POST tiêu chuẩn kết hợp với Puppeteer headless browser để cào toàn bộ danh sách Reel một cách ổn định nhất.
+              Mỗi lần bấm sẽ tạo một lượt cào mới trên GitHub Actions. Website chờ kết quả hoàn chỉnh rồi hiển thị danh sách.
             </p>
           </div>
 
@@ -334,16 +275,6 @@ export default function App() {
             </button>
           </div>
 
-          {loading && (
-            <button
-              onClick={handleCancelScraping}
-              className="w-full sm:w-auto bg-red-600 hover:bg-red-500 text-white px-5 py-3 rounded-xl font-medium text-sm transition flex items-center justify-center gap-2"
-            >
-              <StopCircle className="w-4 h-4" />
-              <span>Hủy quét và giữ kết quả</span>
-            </button>
-          )}
-
           {reelsTabUrl && !loading && (
             <div className="text-xs text-slate-400 font-mono flex items-center gap-2 pt-1">
               <span>URL Đã xử lý:</span>
@@ -358,7 +289,7 @@ export default function App() {
         {loading && (
           <div className="bg-slate-900 border border-blue-500/30 p-6 sm:p-8 rounded-2xl shadow-2xl space-y-4 text-center">
             <RefreshCw className="w-10 h-10 animate-spin text-blue-400 mx-auto" />
-            <h3 className="font-bold text-white text-base">Đang tiến hành cào Reels tự động trên server...</h3>
+            <h3 className="font-bold text-white text-base">Đang cào Reels trên GitHub Actions...</h3>
             <p className="text-xs text-slate-400 max-w-md mx-auto">{progressMsg}</p>
           </div>
         )}
@@ -378,7 +309,7 @@ export default function App() {
                 <Film className="w-5 h-5 text-blue-400" />
                 Kết Quả Thực Tế ({reels.length} Reels)
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">Link mới sẽ hiện ngay khi tìm thấy; hệ thống tự tiếp tục qua nhiều lượt nếu gần hết thời gian chạy.</p>
+              <p className="text-xs text-slate-400 mt-0.5">Kết quả sẽ hiển thị khi GitHub Actions gửi danh sách hoàn chỉnh về website.</p>
             </div>
             
             <div className="flex items-center gap-2 flex-wrap">
