@@ -61,7 +61,7 @@ export default function App() {
       const deadline = Date.now() + 6 * 60 * 1000;
       let result: any = null;
       while (Date.now() < deadline) {
-        await new Promise(resolve => window.setTimeout(resolve, 2500));
+        await new Promise(resolve => window.setTimeout(resolve, 5000));
         const statusResponse = await fetch('/api/scrape-status?jobId=' + encodeURIComponent(startData.jobId), {
           cache: 'no-store',
         });
