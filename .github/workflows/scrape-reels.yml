@@ -1,0 +1,39 @@
+name: Scrape Facebook Reels
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile_url:
+        description: Facebook profile or Reels URL to scrape
+        required: true
+        type: string
+      job_id:
+        description: Unique Vercel job ID
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reels-scrape-${{ inputs.job_id }}
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install
+      - name: Scrape and send result to Vercel
+        env:
+          PROFILE_URL: ${{ inputs.profile_url }}
+          SCRAPE_JOB_ID: ${{ inputs.job_id }}
+          VERCEL_CALLBACK_URL: ${{ secrets.VERCEL_CALLBACK_URL }}
+          SCRAPE_CALLBACK_SECRET: ${{ secrets.SCRAPE_CALLBACK_SECRET }}
+        run: node --import tsx scripts/scrape-job.ts
