@@ -88,7 +88,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
     const result = await scrapePage(page, {
       noScroll: false,
       viewportGrowth: true,
-      initialViewportHeight: 20000,
+      initialViewportHeight: 5000,
       viewportStep: 2000,
       maxViewportHeight: 50000,
       deadline: Date.now() + 105000,
