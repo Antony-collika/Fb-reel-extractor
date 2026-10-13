@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { 
   Globe, Film, Copy, Check, ExternalLink, 
   Download, Trash2, FileText, Sparkles, RefreshCw, AlertCircle, ShieldCheck, Terminal, Code, CheckCircle2, ListTree
@@ -17,94 +17,98 @@ export default function App() {
   const [reelsTabUrl, setReelsTabUrl] = useState('');
   const [copied, setCopied] = useState(false);
   const [copiedScript, setCopiedScript] = useState(false);
+  const [copiedLogs, setCopiedLogs] = useState(false);
   const [reportMetadata, setReportMetadata] = useState<any>(null);
   const [debugLogs, setDebugLogs] = useState<any[]>([]);
   const [showLogs, setShowLogs] = useState(false);
 
   const [progressMsg, setProgressMsg] = useState('Đang khởi tạo trình duyệt giả lập...');
-
-  useEffect(() => {
-    let t1: any, t2: any, t3: any;
-    if (loading) {
-      setProgressMsg('Mở URL tab Reels & chờ khởi tạo nội dung...');
-      t1 = setTimeout(() => {
-        if (loading) setProgressMsg('Đang đóng popup đăng nhập & định vị scroller...');
-      }, 4000);
-      t2 = setTimeout(() => {
-        if (loading) setProgressMsg('Đang cuộn trình duyệt liên tục, ưu tiên thanh cuộn và chờ lazy-load...');
-      }, 9000);
-      t3 = setTimeout(() => {
-        if (loading) setProgressMsg('Đang kiểm tra idle-limit & hoàn tất thu thập link...');
-      }, 16000);
-      return () => {
-        clearTimeout(t1);
-        clearTimeout(t2);
-        clearTimeout(t3);
-      };
-    }
-  }, [loading]);
-
   const handleStartScraping = async () => {
-    if (!profileUrl.trim()) return;
+    if (!profileUrl.trim() || loading) return;
     setLoading(true);
     setError(null);
     setReels([]);
+    setReelsTabUrl('');
     setReportMetadata(null);
     setDebugLogs([]);
+    setShowLogs(false);
+    setCopiedLogs(false);
+    setProgressMsg('Đang gửi yêu cầu đến GitHub Actions...');
+
+    const messages = [
+      'Đang chờ GitHub Actions khởi động trình duyệt...',
+      'Đang mở Facebook và tải danh sách Reels...',
+      'Đang cuộn trang và thu thập liên kết...',
+      'Đang hoàn tất danh sách và gửi kết quả về website...',
+    ];
+    let messageIndex = 0;
+    const progressTimer = window.setInterval(() => {
+      messageIndex = (messageIndex + 1) % messages.length;
+      setProgressMsg(messages[messageIndex]);
+    }, 5000);
 
     try {
-      const res = await fetch('/api/scrape-reels', {
+      const startResponse = await fetch('/api/scrape-reels', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ profileUrl }),
       });
-      const responseText = await res.text();
-      let data: any;
-      try {
-        data = JSON.parse(responseText);
-      } catch {
-        const preview = responseText
-          .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-          .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-          .replace(/<[^>]+>/g, ' ')
-          .replace(/\s+/g, ' ')
-          .trim()
-          .slice(0, 220);
-
-        if (res.status === 404 || /<html|<!doctype html/i.test(responseText)) {
-          throw new Error(
-            'Máy chủ không trả về API /api/scrape-reels (HTTP ' + res.status + '). Có thể bản deploy hiện chỉ chạy giao diện Vite, chưa triển khai backend Puppeteer. Cần cấu hình endpoint API trên máy chủ trước khi cào được Reels.' +
-            (preview ? ' Chi tiết: ' + preview : '')
-          );
-        }
-
-        throw new Error(
-          'Máy chủ trả về dữ liệu không phải JSON (HTTP ' + res.status + ').' +
-          (preview ? ' Phản hồi: ' + preview : '')
-        );
+      const startData = await startResponse.json().catch(() => ({}));
+      if (!startResponse.ok || !startData.jobId) {
+        throw new Error(startData?.error || 'Không thể khởi chạy lượt cào.');
       }
-      if (!res.ok) throw new Error(data?.error || 'Không cào được Reels (HTTP ' + res.status + ')');
 
-      setReelsTabUrl(data.reelsTabUrl || '');
-      const formattedReels: ReelItem[] = (data.links || []).map((link: string) => {
-        const m = link.match(/\/reel\/(\d+)/i);
-        return {
-          id: m ? m[1] : Math.random().toString(),
-          url: link,
-        };
-      });
-      setReels(formattedReels);
-      setDebugLogs(data.debugLogs || []);
+      const deadline = Date.now() + 6 * 60 * 1000;
+      let result: any = null;
+      while (Date.now() < deadline) {
+        await new Promise(resolve => window.setTimeout(resolve, 5000));
+        const statusResponse = await fetch('/api/scrape-status?jobId=' + encodeURIComponent(startData.jobId), {
+          cache: 'no-store',
+        });
+        const statusData = await statusResponse.json().catch(() => ({}));
+        if (!statusResponse.ok) throw new Error(statusData?.error || 'Không đọc được trạng thái lượt cào.');
+        if (statusData.status === 'failed') throw new Error(statusData.error || 'GitHub Actions không hoàn tất lượt cào.');
+        if (statusData.status === 'completed') {
+          result = statusData.result;
+          break;
+        }
+      }
+      if (!result) throw new Error('Đã chờ quá lâu mà chưa nhận được kết quả. Bạn có thể thử lại.');
+
+      const links: string[] = Array.isArray(result.links) ? result.links : [];
+      const unique = new Map<string, ReelItem>();
+      for (const link of links) {
+        const match = String(link).match(/\/reel\/(\d+)/i);
+        if (match && !unique.has(match[1])) {
+          unique.set(match[1], { id: match[1], url: 'https://www.facebook.com/reel/' + match[1] + '/' });
+        }
+      }
+      const finalReels = Array.from(unique.values());
+      setReels(finalReels);
+      setDebugLogs(Array.isArray(result.debugLogs) ? result.debugLogs : []);
+      if (Array.isArray(result.debugLogs) && result.debugLogs.length > 0 && /stopped_(detached_frame|scrape_error|target_closed|time_budget)/.test(result.status || '')) {
+        setShowLogs(true);
+      }
+      setReelsTabUrl(result.reelsTabUrl || '');
       setReportMetadata({
-        source: data.reelsTabUrl,
+        source: result.reelsTabUrl || profileUrl,
         collected_at: new Date().toISOString(),
-        count: formattedReels.length,
-        status: data.status || 'completed_fully',
-        note: `Hoàn tất thu thập ổn định thực tế. Trạng thái dừng: ${data.status}.`,
+        count: finalReels.length,
+        status: result.status || 'completed',
+        note: 'Đã nhận kết quả hoàn chỉnh từ GitHub Actions.',
       });
+      setProgressMsg('Đã nhận được kết quả.');
     } catch (err: any) {
-      setError(err.message || 'Lỗi khi cào dữ liệu từ trình duyệt giả lập.');
+      setError(err?.message || 'Lỗi khi cào dữ liệu.');
+      setReportMetadata({
+        source: profileUrl,
+        collected_at: new Date().toISOString(),
+        count: 0,
+        status: 'failed',
+        note: 'Lượt cào không hoàn tất.',
+      });
     } finally {
+      window.clearInterval(progressTimer);
       setLoading(false);
     }
   };
@@ -156,6 +160,17 @@ export default function App() {
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+  };
+
+  const handleCopyDebugLogs = async () => {
+    if (debugLogs.length === 0) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(debugLogs, null, 2));
+      setCopiedLogs(true);
+      setTimeout(() => setCopiedLogs(false), 2000);
+    } catch {
+      setError('Không thể sao chép Debug Logs. Hãy kiểm tra quyền clipboard của trình duyệt.');
+    }
   };
 
   const handleCopyAll = () => {
@@ -229,7 +244,7 @@ export default function App() {
               Tự Động Trích Xuất Reels Ổn Định (POST API)
             </h2>
             <p className="text-slate-400 text-sm">
-              Ứng dụng sử dụng phương thức POST tiêu chuẩn kết hợp với Puppeteer headless browser để cào toàn bộ danh sách Reel một cách ổn định nhất.
+              Mỗi lần bấm sẽ tạo một lượt cào mới trên GitHub Actions. Website chờ kết quả hoàn chỉnh rồi hiển thị danh sách.
             </p>
           </div>
 
@@ -274,7 +289,7 @@ export default function App() {
         {loading && (
           <div className="bg-slate-900 border border-blue-500/30 p-6 sm:p-8 rounded-2xl shadow-2xl space-y-4 text-center">
             <RefreshCw className="w-10 h-10 animate-spin text-blue-400 mx-auto" />
-            <h3 className="font-bold text-white text-base">Đang tiến hành cào Reels tự động trên server...</h3>
+            <h3 className="font-bold text-white text-base">Đang cào Reels trên GitHub Actions...</h3>
             <p className="text-xs text-slate-400 max-w-md mx-auto">{progressMsg}</p>
           </div>
         )}
@@ -294,7 +309,7 @@ export default function App() {
                 <Film className="w-5 h-5 text-blue-400" />
                 Kết Quả Thực Tế ({reels.length} Reels)
               </h3>
-              <p className="text-xs text-slate-400 mt-0.5">Số lượng reel thu thập chính xác 100% từ tiến trình tự động</p>
+              <p className="text-xs text-slate-400 mt-0.5">Kết quả sẽ hiển thị khi GitHub Actions gửi danh sách hoàn chỉnh về website.</p>
             </div>
             
             <div className="flex items-center gap-2 flex-wrap">
@@ -337,12 +352,22 @@ export default function App() {
             <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 text-xs font-mono text-slate-300 space-y-1">
               <div className="flex items-center justify-between">
                 <span><strong className="text-blue-400">Nguồn:</strong> {reportMetadata.source}</span>
-                <button
-                  onClick={() => setShowLogs(!showLogs)}
-                  className="text-amber-400 hover:underline flex items-center gap-1"
-                >
-                  <ListTree className="w-3.5 h-3.5" /> {showLogs ? 'Ẩn Debug Logs' : `Xem Debug Logs (${debugLogs.length})`}
-                </button>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => setShowLogs(!showLogs)}
+                    disabled={debugLogs.length === 0}
+                    className="text-amber-400 hover:underline disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+                  >
+                    <ListTree className="w-3.5 h-3.5" /> {showLogs ? 'Ẩn Debug Logs' : `Xem Debug Logs (${debugLogs.length})`}
+                  </button>
+                  <button
+                    onClick={handleCopyDebugLogs}
+                    disabled={debugLogs.length === 0}
+                    className="text-blue-400 hover:underline disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1"
+                  >
+                    <Copy className="w-3.5 h-3.5" /> {copiedLogs ? 'Đã copy log' : 'Copy Debug Logs'}
+                  </button>
+                </div>
               </div>
               <div><strong className="text-blue-400">Thời điểm:</strong> {reportMetadata.collected_at}</div>
               <div><strong className="text-blue-400">Trạng thái:</strong> <span className="text-emerald-400">{reportMetadata.status}</span></div>

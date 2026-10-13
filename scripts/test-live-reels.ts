@@ -1,68 +1,26 @@
-import handler from '../api/scrape-reels.ts';
+import { scrapeProfile } from './scrape-local.ts';
 
-const profileUrl = 'https://www.facebook.com/people/Professor-Glitch/61580646125999/?sk=reels_tab';
-
-type Payload = {
-  success?: boolean;
-  count?: number;
-  links?: string[];
-  pageState?: string;
-  status?: string;
-  finalUrl?: string;
-  error?: string;
-  debugLogs?: Array<{ time: string; msg: string; meta: Record<string, unknown> }>;
-};
-
-const response = {
-  statusCode: 200,
-  body: undefined as Payload | undefined,
-  headers: {} as Record<string, string>,
-  status(code: number) {
-    this.statusCode = code;
-    return this;
-  },
-  json(body: Payload) {
-    this.body = body;
-    return this;
-  },
-  setHeader(name: string, value: string) {
-    this.headers[name] = value;
-  },
-};
-
+const profileUrl = process.env.TEST_PROFILE_URL || 'https://www.facebook.com/people/Professor-Glitch/61580646125999/?sk=reels_tab';
 const startedAt = Date.now();
 
 try {
-  await handler(
-    { method: 'POST', body: { profileUrl } } as any,
-    response as any,
-  );
-
+  const result = await scrapeProfile(profileUrl);
   const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000);
-  const result = response.body ?? {};
-
   console.log(JSON.stringify({
     test: 'live-facebook-reels-acceptance',
     profileUrl,
-    httpStatus: response.statusCode,
-    count: result.count ?? 0,
+    count: result.count,
     threshold: 61,
-    pageState: result.pageState ?? null,
-    scraperStatus: result.status ?? null,
-    finalUrl: result.finalUrl ?? null,
-    debugLogs: result.debugLogs ?? [],
+    pageState: result.pageState,
+    scraperStatus: result.status,
+    finalUrl: result.finalUrl,
+    debugLogs: result.debugLogs,
     elapsedSeconds,
-    error: result.error ?? null,
   }, null, 2));
 
-  if (response.statusCode !== 200) {
-    throw new Error(`Scraper API returned HTTP ${response.statusCode}: ${result.error ?? 'unknown error'}`);
+  if (!Array.isArray(result.links) || result.links.length <= 60) {
+    throw new Error(`Acceptance test failed: expected more than 60 Reels, got ${result.links?.length ?? 0}`);
   }
-
-  if (!Array.isArray(result.links) || (result.count ?? result.links.length) <= 60) {
-    throw new Error(`Acceptance test failed: expected more than 60 Reels, got ${result.count ?? result.links?.length ?? 0}`);
-  }
-
   console.log(`PASS: collected ${result.count} Reels (> 60).`);
 } catch (error) {
   console.error(error instanceof Error ? error.message : error);

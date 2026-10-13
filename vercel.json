@@ -5,7 +5,7 @@
   },
   "functions": {
     "api/scrape-reels.ts": {
-      "maxDuration": 60
+      "maxDuration": 150
     }
   }
 }

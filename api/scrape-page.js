@@ -20,21 +20,6 @@ function inspectLoginPopup() {
   return { visible: false, closable: false, text: '' };
 }
 
-function closeVisiblePopup() {
-  const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))
-    .filter(isVisible);
-  for (const dialog of dialogs) {
-    const buttons = dialog.querySelectorAll('[aria-label], button, [role="button"]');
-    for (const button of buttons) {
-      if (isVisible(button) && /^(close|đóng|dismiss)$/i.test(button.getAttribute('aria-label') || '')) {
-        button.click();
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
 function getPageSnapshot() {
   const visible = (element) => {
     const rect = element.getBoundingClientRect();
@@ -157,9 +142,6 @@ async function dragScrollbar(page, useWindow, scroller, before) {
     await page.mouse.down();
     await page.mouse.move(trackX, endY, { steps: 8 });
     await page.mouse.up();
-    // Headless Chromium may render the scrollbar without accepting a drag at
-    // the calculated track coordinate. Keep the real drag attempt, then use
-    // a wheel event if the next scan shows that the page did not move.
     return { method: 'right-scrollbar-drag', amount: endY - startY, startY, endY };
   }
 
@@ -168,85 +150,185 @@ async function dragScrollbar(page, useWindow, scroller, before) {
   return { method: 'page-wheel-fallback', amount };
 }
 
-export async function scrapePage(page) {
+export async function scrapePage(page, options = {}) {
+  const {
+    deadline = Date.now() + 30000,
+    noScroll = false,
+    onLink = () => {},
+    onProgress = () => {},
+    shouldCancel = () => false,
+    viewportGrowth = true,
+    initialViewportHeight = 20000,
+    viewportStep = 1000,
+    maxViewportHeight = 50000,
+  } = options;
   const seen = new Map();
   const debugLogs = [];
   const log = (msg, meta = {}) => debugLogs.push({ time: new Date().toISOString(), msg, meta });
   const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const mergeLinks = (snapshot) => {
-    for (const [id, url] of snapshot.links || []) if (!seen.has(id)) seen.set(id, url);
+    for (const [id, url] of snapshot.links || []) {
+      if (!seen.has(id)) {
+        seen.set(id, url);
+        onLink(url, { id, count: seen.size });
+      }
+    }
     return seen.size;
   };
+
+  if (viewportGrowth) {
+    const viewport = page.viewport() || { width: 1280, height: initialViewportHeight };
+    if (viewport.height !== initialViewportHeight) {
+      await page.setViewport({ width: viewport.width, height: initialViewportHeight });
+    }
+  }
 
   let snapshot = await page.evaluate(getPageSnapshot);
   mergeLinks(snapshot);
   log('Initial scan complete', {
     count: seen.size, pageState: snapshot.pageState,
     popup: snapshot.loginPopup, scrollHeight: snapshot.scrollHeight,
+    clientHeight: snapshot.clientHeight, finalUrl: snapshot.finalUrl, title: snapshot.title,
+    mode: noScroll ? 'no-scroll-viewport-experiment' : 'scroll',
   });
+  onProgress({ phase: 'initial_scan', count: seen.size, pageState: snapshot.pageState, mode: noScroll ? 'no-scroll-viewport-experiment' : 'scroll' });
 
-  const scroller = await page.evaluateHandle(findScrollableContainer);
-  const scrollerElement = scroller.asElement();
+  const scroller = (noScroll || viewportGrowth) ? null : await page.evaluateHandle(findScrollableContainer);
+  const scrollerElement = scroller?.asElement() || null;
   const useWindow = !scrollerElement;
   let idleSteps = 0;
   let previousCount = seen.size;
   let lastHeight = snapshot.scrollHeight;
-  const maxSteps = 180;
-  const idleLimit = 8;
+  const maxSteps = noScroll ? 12 : 120;
+  const idleLimit = noScroll ? 3 : 8;
+  let stopReason = 'natural';
 
+  try {
   for (let step = 1; step <= maxSteps && idleSteps < idleLimit; step++) {
+    if (shouldCancel()) {
+      stopReason = 'cancelled';
+      log('Stopped because cancellation was requested', { step, count: seen.size });
+      break;
+    }
+    if (Date.now() >= deadline - 2500) {
+      stopReason = 'time_budget';
+      log('Stopped before function timeout to preserve partial results', { step, count: seen.size });
+      break;
+    }
     snapshot = await page.evaluate(getPageSnapshot);
     mergeLinks(snapshot);
     if (snapshot.pageState === 'checkpoint' || snapshot.pageState === 'login_required' ||
         (snapshot.pageState === 'login_popup_blocked' && !snapshot.loginPopup.closable)) {
       log('Stopped because Facebook blocked further browsing', {
         step, pageState: snapshot.pageState, popup: snapshot.loginPopup, count: seen.size,
+        finalUrl: snapshot.finalUrl, title: snapshot.title,
       });
       break;
     }
 
     const before = await page.evaluate(getMetrics, useWindow, scrollerElement);
-    let scrollAction = await dragScrollbar(page, useWindow, scrollerElement, before);
-    if (useWindow) {
-      const movedAfterDrag = await page.evaluate(() => window.scrollY);
-      if (movedAfterDrag <= before.top + 8 && before.top + before.clientHeight < before.scrollHeight - 80) {
-        const fallbackAmount = Math.max(420, Math.floor(before.clientHeight * 0.92));
-        await page.mouse.move(Math.floor((page.viewport()?.width || 1280) / 2), Math.floor((page.viewport()?.height || 1024) / 2));
-        await page.mouse.wheel({ deltaY: fallbackAmount });
-        scrollAction = { ...scrollAction, fallback: 'wheel', fallbackAmount };
+    let scrollAction = { method: 'none-no-scroll-experiment' };
+    if (!noScroll && viewportGrowth) {
+      const viewport = page.viewport() || { width: 1280, height: initialViewportHeight };
+      const nextHeight = Math.min(viewport.height + viewportStep, maxViewportHeight);
+      if (nextHeight > viewport.height) {
+        await page.setViewport({ width: viewport.width, height: nextHeight });
+        scrollAction = { method: 'viewport-growth', from: viewport.height, to: nextHeight };
+      } else {
+        scrollAction = { method: 'viewport-growth-cap', height: viewport.height };
+      }
+    } else if (!noScroll) {
+      scrollAction = await dragScrollbar(page, useWindow, scrollerElement, before);
+      if (useWindow) {
+        const movedAfterDrag = await page.evaluate(() => window.scrollY);
+        if (movedAfterDrag <= before.top + 8 && before.top + before.clientHeight < before.scrollHeight - 80) {
+          const fallbackAmount = Math.max(420, Math.floor(before.clientHeight * 0.92));
+          await page.mouse.move(Math.floor((page.viewport()?.width || 1280) / 2), Math.floor((page.viewport()?.height || 1024) / 2));
+          await page.mouse.wheel({ deltaY: fallbackAmount });
+          scrollAction = { ...scrollAction, fallback: 'wheel', fallbackAmount };
+        }
       }
     }
-    await pause(1800);
+    await pause(noScroll ? 1400 : viewportGrowth ? 600 : 1800);
+    if (shouldCancel()) {
+      stopReason = 'cancelled';
+      log('Stopped because cancellation was requested after scroll wait', { step, count: seen.size });
+      break;
+    }
 
     snapshot = await page.evaluate(getPageSnapshot);
     const count = mergeLinks(snapshot);
     const after = await page.evaluate(getMetrics, useWindow, scrollerElement);
     const added = count - previousCount;
     const heightChanged = after.scrollHeight !== lastHeight;
-    idleSteps = added > 0 || heightChanged ? 0 : idleSteps + 1;
-    log('Continuous browser scroll scan', {
+    idleSteps = added > 0 ? 0 : idleSteps + 1;
+    log(noScroll ? 'No-scroll viewport scan' : 'Continuous browser scroll scan', {
       step, count, added, heightChanged, idleSteps, scrollAction,
       before, after, pageState: snapshot.pageState, popup: snapshot.loginPopup,
+      finalUrl: snapshot.finalUrl, title: snapshot.title,
     });
     previousCount = count;
     lastHeight = after.scrollHeight;
+    onProgress({ phase: noScroll ? 'no_scroll_scan' : 'scroll', step, count, added, idleSteps, scrollY: after.top, pageState: snapshot.pageState, mode: noScroll ? 'no-scroll-viewport-experiment' : 'scroll' });
 
     if (snapshot.pageState === 'login_popup_blocked' || snapshot.pageState === 'checkpoint' || snapshot.pageState === 'login_required') break;
     const atBottom = after.top + after.clientHeight >= after.scrollHeight - 80;
-    if (atBottom && idleSteps >= 3) break;
+    if (!noScroll && atBottom && idleSteps >= 3) break;
+  }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/target closed|session closed|browser has disconnected|connection closed/i.test(message)) {
+      stopReason = 'target_closed';
+      log('Browser target closed during scan; preserving partial results', { count: seen.size, error: message });
+    } else if (/detached frame/i.test(message)) {
+      stopReason = 'detached_frame';
+      log('Frame detached during scan; preserving partial results', { count: seen.size, error: message });
+    } else {
+      stopReason = 'scrape_error';
+      log('Unexpected scan error; preserving partial results', { count: seen.size, error: message });
+    }
   }
 
-  snapshot = await page.evaluate(getPageSnapshot);
-  mergeLinks(snapshot);
+  try {
+    snapshot = await page.evaluate(getPageSnapshot);
+    mergeLinks(snapshot);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (/target closed|session closed|browser has disconnected|connection closed/i.test(message)) {
+      stopReason = 'target_closed';
+      log('Final snapshot skipped because browser target is closed', { count: seen.size, error: message });
+    } else if (/detached frame/i.test(message)) {
+      stopReason = 'detached_frame';
+      log('Final snapshot skipped because frame is detached', { count: seen.size, error: message });
+    } else {
+      stopReason = 'scrape_error';
+      log('Final snapshot failed; preserving partial results', { count: seen.size, error: message });
+    }
+  }
+  log('Final page snapshot', {
+    count: seen.size, pageState: snapshot.pageState, finalUrl: snapshot.finalUrl,
+    title: snapshot.title, scrollY: snapshot.scrollY, scrollHeight: snapshot.scrollHeight,
+    clientHeight: snapshot.clientHeight, popup: snapshot.loginPopup,
+  });
   if (scrollerElement) await scroller.dispose();
 
-  const status = snapshot.pageState === 'login_popup_blocked'
-    ? 'stopped_login_popup_without_close'
-    : snapshot.pageState === 'checkpoint'
-      ? 'stopped_checkpoint'
-      : snapshot.pageState === 'login_required'
-        ? 'stopped_login_required'
-        : idleSteps >= idleLimit ? 'stopped_idle_limit' : 'stopped_after_scrolling';
+  const status = stopReason === 'target_closed'
+    ? 'stopped_target_closed'
+    : stopReason === 'detached_frame'
+      ? 'stopped_detached_frame'
+      : stopReason === 'scrape_error'
+        ? 'stopped_scrape_error'
+        : stopReason === 'cancelled'
+      ? 'stopped_cancelled'
+      : stopReason === 'time_budget'
+        ? 'stopped_time_budget'
+      : snapshot.pageState === 'login_popup_blocked'
+        ? 'stopped_login_popup_without_close'
+        : snapshot.pageState === 'checkpoint'
+          ? 'stopped_checkpoint'
+          : snapshot.pageState === 'login_required'
+            ? 'stopped_login_required'
+            : idleSteps >= idleLimit ? 'stopped_idle_limit' : noScroll ? 'stopped_after_no_scroll_experiment' : 'stopped_after_scrolling';
 
   return {
     links: Array.from(seen.values()), debugLogs, status,

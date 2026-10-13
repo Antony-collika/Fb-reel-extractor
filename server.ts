@@ -15,6 +15,13 @@ async function startServer() {
 
   app.post('/api/scrape-reels', async (req, res) => {
     let browser: Awaited<ReturnType<typeof puppeteer.launch>> | undefined;
+    let clientDisconnected = false;
+    res.on('close', () => {
+      if (!res.writableEnded) {
+        clientDisconnected = true;
+        void browser?.close().catch(() => undefined);
+      }
+    });
     try {
       const profileUrl = typeof req.body?.profileUrl === 'string' ? req.body.profileUrl : '';
       if (!profileUrl.trim()) {
@@ -38,33 +45,56 @@ async function startServer() {
           '--disable-dev-shm-usage',
           '--disable-gpu',
           '--disable-notifications',
-          '--window-size=1280,1024',
+          '--window-size=1280,20000',
         ],
       });
+      if (clientDisconnected) {
+        await browser.close();
+        return;
+      }
 
       const page = await browser.newPage();
-      page.setDefaultNavigationTimeout(45000);
-      page.setDefaultTimeout(12000);
-      await page.setViewport({ width: 1280, height: 1024 });
+      page.setDefaultNavigationTimeout(18000);
+      page.setDefaultTimeout(8000);
+      await page.setViewport({ width: 1280, height: 20000 });
       await page.setUserAgent(
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
       );
 
       try {
         // Facebook often keeps network requests open indefinitely; don't wait for networkidle.
-        await page.goto(reelsTabUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+        await page.goto(reelsTabUrl, { waitUntil: 'domcontentloaded', timeout: 18000 });
       } catch (error) {
         console.warn('[Puppeteer] Navigation did not finish cleanly:', error);
       }
+      if (clientDisconnected) return;
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      if (clientDisconnected) return;
 
-      await new Promise((resolve) => setTimeout(resolve, 2500));
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders();
 
-      const evaluationResult = await scrapePage(page);
+      const send = (event: string, data: unknown) => {
+        if (!clientDisconnected && !res.destroyed) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
 
-      await browser.close();
-      browser = undefined;
+      const evaluationResult = await scrapePage(page, {
+        noScroll: false,
+        viewportGrowth: true,
+        initialViewportHeight: 20000,
+        viewportStep: 2000,
+        maxViewportHeight: 50000,
+        deadline: Date.now() + 105000,
+        shouldCancel: () => clientDisconnected,
+        onLink: (url: string, meta: unknown) => send('link', { url, meta }),
+        onProgress: (progress: unknown) => send('progress', progress),
+      });
 
-      res.json({
+      if (clientDisconnected) return;
+      send('done', {
         success: true,
         profileId,
         reelsTabUrl,
@@ -76,11 +106,19 @@ async function startServer() {
         finalUrl: evaluationResult.finalUrl,
       });
     } catch (error: any) {
+      if (clientDisconnected) return;
       if (browser) {
         try { await browser.close(); } catch { /* browser may already be closed */ }
       }
       console.error('Puppeteer scrape reels error:', error);
-      res.status(500).json({ error: error.message || 'Failed to scrape Reels list' });
+      if (res.headersSent) {
+        if (!res.destroyed) {
+          res.write(`event: error\ndata: ${JSON.stringify({ error: error.message || 'Failed to scrape Reels list' })}\n\n`);
+          res.end();
+        }
+      } else {
+        res.status(500).json({ error: error.message || 'Failed to scrape Reels list' });
+      }
     }
   });
 
